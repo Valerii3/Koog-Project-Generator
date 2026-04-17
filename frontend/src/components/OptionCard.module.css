@@ -1,0 +1,42 @@
+.card {
+  border: 2px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 16px 20px;
+  cursor: pointer;
+  flex: 1 1 200px;
+  min-width: 180px;
+  background: #fff;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+
+.card:hover {
+  border-color: #bca9f5;
+}
+
+.selected {
+  border-color: #7f52ff;
+  background: #f5f0ff;
+}
+
+.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.disabled:hover {
+  border-color: #e0e0e0;
+}
+
+.label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+  color: #1a1a1a;
+}
+
+.description {
+  font-size: 0.82rem;
+  color: #666;
+  line-height: 1.4;
+}

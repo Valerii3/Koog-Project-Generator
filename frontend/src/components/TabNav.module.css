@@ -1,0 +1,47 @@
+.nav {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e8e8e8;
+}
+
+.tab {
+  background: none;
+  border: none;
+  padding: 12px 24px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #666;
+  font-family: inherit;
+  position: relative;
+  transition: color 0.15s;
+}
+
+.tab:hover:not(.disabledTab) {
+  color: #333;
+}
+
+.active {
+  color: #7f52ff;
+}
+
+.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #7f52ff;
+  border-radius: 2px 2px 0 0;
+}
+
+.disabledTab {
+  color: #bbb;
+  cursor: not-allowed;
+}
+
+.disabledHint {
+  font-size: 0.75rem;
+  font-weight: 400;
+}
