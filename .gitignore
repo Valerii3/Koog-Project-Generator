@@ -1,0 +1,37 @@
+# Gradle build files
+.gradle/
+build/
+
+# Kotlin/IntelliJ
+*.iml
+*.ipr
+*.iws
+.idea/
+.idea/*
+*.log
+
+# Mac files
+.DS_Store
+
+# Package / distribution artifacts
+*.zip
+*.jar
+*.war
+*.ear
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# IDE files
+.vscode/
+
+# Generated files
+out/
+
+# Local environment files
+local.properties
+
+# Logs
+*.log
