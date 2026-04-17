@@ -1,6 +1,7 @@
 # Gradle build files
 .gradle/
 build/
+!gradle/wrapper/gradle-wrapper.jar
 
 # Kotlin/IntelliJ
 *.iml
