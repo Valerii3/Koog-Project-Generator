@@ -6,6 +6,7 @@ class TemplateRegistry(
     private val templates: Map<AgentTemplateType, ProjectTemplate> = mapOf(
         AgentTemplateType.BASIC to BasicAgentTemplate(),
         AgentTemplateType.FUNCTIONAL to FunctionalAgentTemplate(),
+        AgentTemplateType.GRAPH to GraphAgentTemplate(),
         AgentTemplateType.PLANNER to PlannerAgentTemplate()
     )
 ) {

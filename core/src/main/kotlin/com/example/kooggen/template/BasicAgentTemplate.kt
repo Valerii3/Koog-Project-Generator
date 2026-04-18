@@ -46,11 +46,12 @@ class BasicAgentTemplate : ProjectTemplate {
 
         dependencies {
             implementation("ai.koog:koog-agents:0.7.1")
-            ${if (spec.features.hasChatMemory) "implementation(\"ai.koog:agents-features-memory:0.7.1\")" else ""}
+            ${if (spec.features.hasChatMemory || spec.features.hasLongTermMemory) "implementation(\"ai.koog:agents-features-memory:0.7.1\")" else ""}
             ${if (spec.features.hasAgentPersistence) "implementation(\"ai.koog.agents:agents-features-snapshot:0.7.1\")" else ""}
             ${if (spec.features.hasTracing) "implementation(\"ai.koog:agents-features-trace:0.7.1\")" else ""}
             ${if (spec.features.hasTracing) "implementation(\"io.github.oshai:kotlin-logging-jvm:7.0.0\")" else ""}
             ${if (spec.features.hasTracing) "runtimeOnly(\"org.slf4j:slf4j-simple:2.0.16\")" else ""}
+            ${if (spec.tooling.hasMcpTools) "implementation(\"ai.koog:agents-mcp:0.7.1\")" else ""}
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
@@ -83,6 +84,15 @@ class BasicAgentTemplate : ProjectTemplate {
             source.addImport("import ai.koog.agents.features.tracing.feature.Tracing")
             source.addImport("import ai.koog.agents.features.tracing.writer.TraceFeatureMessageLogWriter")
             source.addImport("import io.github.oshai.kotlinlogging.KotlinLogging")
+        }
+        if (spec.features.hasLongTermMemory) {
+            source.addImport("import ai.koog.agents.core.annotation.ExperimentalAgentsApi")
+            source.addImport("import ai.koog.agents.features.memory.feature.LongTermMemory")
+            source.addImport("import ai.koog.agents.features.memory.storage.InMemoryRecordStorage")
+            source.addImport("import ai.koog.agents.features.memory.search.SimilaritySearchStrategy")
+        }
+        if (spec.features.hasAnyOpenTelemetry) {
+            source.addImport("import ai.koog.agents.features.opentelemetry.feature.OpenTelemetry")
         }
         source.addImports(provider.importLines)
         source.addImport("import kotlinx.coroutines.runBlocking")
@@ -171,8 +181,13 @@ class BasicAgentTemplate : ProjectTemplate {
         if (provider.executorSetupLines.isNotEmpty()) {
             appendLine()
         }
-        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory || spec.features.hasAgentPersistence || spec.features.hasTracing
+        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory || spec.features.hasAgentPersistence || spec.features.hasTracing || spec.features.hasLongTermMemory || spec.features.hasAnyOpenTelemetry
         if (hasFeatureInit) {
+            if (spec.features.hasLongTermMemory) {
+                appendLine("    @OptIn(ExperimentalAgentsApi::class)")
+                appendLine("    val longTermMemoryStorage = InMemoryRecordStorage()")
+                appendLine()
+            }
             appendLine("    val installFeatures: AIAgent<String, String>.() -> Unit = {")
             if (spec.features.hasTracing) {
                 appendLine("        val logger = KotlinLogging.logger(\"koog.tracing\")")
@@ -203,6 +218,32 @@ class BasicAgentTemplate : ProjectTemplate {
                 appendLine("        install(Persistence) {")
                 appendLine("            storage = InMemoryPersistenceStorageProvider()")
                 appendLine("            enableAutomaticPersistence = false")
+                appendLine("        }")
+            }
+            if (spec.features.hasLongTermMemory) {
+                appendLine("        @OptIn(ExperimentalAgentsApi::class)")
+                appendLine("        install(LongTermMemory) {")
+                appendLine("            retrieval {")
+                appendLine("                storage = longTermMemoryStorage")
+                appendLine("                searchStrategy = SimilaritySearchStrategy(topK = ${spec.features.longTermMemory.topK})")
+                appendLine("            }")
+                appendLine("            ingestion {")
+                appendLine("                storage = longTermMemoryStorage")
+                appendLine("                enableAutomaticIngestion = ${spec.features.longTermMemory.enableAutomaticIngestion}")
+                appendLine("            }")
+                appendLine("        }")
+            }
+            if (spec.features.hasAnyOpenTelemetry) {
+                appendLine("        install(OpenTelemetry) {")
+                if (spec.features.hasDatadogExporter) {
+                    appendLine("            addDatadogExporter()")
+                }
+                if (spec.features.hasLangfuseExporter) {
+                    appendLine("            addLangfuseExporter()")
+                }
+                if (spec.features.hasWeaveExporter) {
+                    appendLine("            addWeaveExporter()")
+                }
                 appendLine("        }")
             }
             appendLine("    }")
@@ -240,7 +281,7 @@ class BasicAgentTemplate : ProjectTemplate {
         if (spec.tooling.enabled) {
             appendLine("            toolRegistry = toolRegistry,")
         }
-        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory || spec.features.hasAgentPersistence || spec.features.hasTracing
+        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory || spec.features.hasAgentPersistence || spec.features.hasTracing || spec.features.hasLongTermMemory || spec.features.hasAnyOpenTelemetry
         if (hasFeatureInit) {
             appendLine("            init = installFeatures")
         }
@@ -271,6 +312,9 @@ class BasicAgentTemplate : ProjectTemplate {
                 )
             }
         }
+        if (spec.tooling.hasMcpTools) {
+            out += GeneratedFile("$base/McpTools.kt", renderMcpToolsKt(spec))
+        }
         return out
     }
 
@@ -288,7 +332,8 @@ class BasicAgentTemplate : ProjectTemplate {
             appendLine("import ${spec.packageName}.tools.createAgentAsToolRegistry")
         }
         appendLine()
-        appendLine("fun createToolRegistry(apiKey: String? = null): ToolRegistry {")
+        val suspendModifier = if (spec.tooling.hasMcpTools) "suspend " else ""
+        appendLine("${suspendModifier}fun createToolRegistry(apiKey: String? = null): ToolRegistry {")
         appendLine("    val registries = mutableListOf<ToolRegistry>()")
         if (spec.tooling.hasBuiltInTools) {
             appendLine("    registries += createBuiltInToolRegistry()")
@@ -299,7 +344,36 @@ class BasicAgentTemplate : ProjectTemplate {
         if (spec.tooling.hasAgentAsTools) {
             appendLine("    registries += createAgentAsToolRegistry(apiKey)")
         }
+        if (spec.tooling.hasMcpTools) {
+            appendLine("    registries += createMcpToolRegistry()")
+        }
         appendLine("    return registries.fold(ToolRegistry { }) { acc, item -> acc + item }")
+        appendLine("}")
+    }
+
+    private fun renderMcpToolsKt(spec: ProjectSpec): String = buildString {
+        appendLine("package ${spec.packageName}.tools")
+        appendLine()
+        appendLine("import ai.koog.agents.mcp.McpToolRegistryProvider")
+        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
+        appendLine()
+        appendLine("suspend fun createMcpToolRegistry(): ToolRegistry {")
+        val servers = spec.tooling.mcpServers.ifEmpty {
+            listOf(com.example.kooggen.model.McpServerSpec("path/to/mcp/server"))
+        }
+        if (servers.size == 1) {
+            appendLine("    val process = ProcessBuilder(\"${escapeKotlinString(servers[0].serverCommand)}\").start()")
+            appendLine("    return McpToolRegistryProvider.fromProcess(process = process)")
+        } else {
+            servers.forEachIndexed { i, server ->
+                appendLine("    val process${i + 1} = ProcessBuilder(\"${escapeKotlinString(server.serverCommand)}\").start()")
+            }
+            servers.forEachIndexed { i, _ ->
+                appendLine("    val registry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
+            }
+            val combined = (1..servers.size).joinToString(" + ") { "registry$it" }
+            appendLine("    return $combined")
+        }
         appendLine("}")
     }
 

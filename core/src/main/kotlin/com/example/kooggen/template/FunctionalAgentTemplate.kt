@@ -45,6 +45,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
 
         dependencies {
             implementation("ai.koog:koog-agents:0.7.1")
+            ${if (spec.tooling.hasMcpTools) "implementation(\"ai.koog:agents-mcp:0.7.1\")" else ""}
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
@@ -156,6 +157,9 @@ class FunctionalAgentTemplate : ProjectTemplate {
                 )
             }
         }
+        if (spec.tooling.hasMcpTools) {
+            out += GeneratedFile("$base/McpTools.kt", renderMcpToolsKt(spec))
+        }
         return out
     }
 
@@ -173,7 +177,8 @@ class FunctionalAgentTemplate : ProjectTemplate {
             appendLine("import ${spec.packageName}.tools.createAgentAsToolRegistry")
         }
         appendLine()
-        appendLine("fun createToolRegistry(apiKey: String? = null): ToolRegistry {")
+        val suspendModifier = if (spec.tooling.hasMcpTools) "suspend " else ""
+        appendLine("${suspendModifier}fun createToolRegistry(apiKey: String? = null): ToolRegistry {")
         appendLine("    val registries = mutableListOf<ToolRegistry>()")
         if (spec.tooling.hasBuiltInTools) {
             appendLine("    registries += createBuiltInToolRegistry()")
@@ -184,7 +189,36 @@ class FunctionalAgentTemplate : ProjectTemplate {
         if (spec.tooling.hasAgentAsTools) {
             appendLine("    registries += createAgentAsToolRegistry(apiKey)")
         }
+        if (spec.tooling.hasMcpTools) {
+            appendLine("    registries += createMcpToolRegistry()")
+        }
         appendLine("    return registries.fold(ToolRegistry { }) { acc, item -> acc + item }")
+        appendLine("}")
+    }
+
+    private fun renderMcpToolsKt(spec: ProjectSpec): String = buildString {
+        appendLine("package ${spec.packageName}.tools")
+        appendLine()
+        appendLine("import ai.koog.agents.mcp.McpToolRegistryProvider")
+        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
+        appendLine()
+        appendLine("suspend fun createMcpToolRegistry(): ToolRegistry {")
+        val servers = spec.tooling.mcpServers.ifEmpty {
+            listOf(com.example.kooggen.model.McpServerSpec("path/to/mcp/server"))
+        }
+        if (servers.size == 1) {
+            appendLine("    val process = ProcessBuilder(\"${escapeKotlinString(servers[0].serverCommand)}\").start()")
+            appendLine("    return McpToolRegistryProvider.fromProcess(process = process)")
+        } else {
+            servers.forEachIndexed { i, server ->
+                appendLine("    val process${i + 1} = ProcessBuilder(\"${escapeKotlinString(server.serverCommand)}\").start()")
+            }
+            servers.forEachIndexed { i, _ ->
+                appendLine("    val registry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
+            }
+            val combined = (1..servers.size).joinToString(" + ") { "registry$it" }
+            appendLine("    return $combined")
+        }
         appendLine("}")
     }
 

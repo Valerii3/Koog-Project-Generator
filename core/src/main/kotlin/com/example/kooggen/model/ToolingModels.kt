@@ -15,6 +15,10 @@ enum class ToolCapability(
     AGENT_AS_TOOL(
         cliLabel = "Create agents as tools",
         description = "Scaffolds specialized sub-agents via AIAgentService.createAgentTool()."
+    ),
+    MCP(
+        cliLabel = "MCP (Model Context Protocol) tools",
+        description = "Connects to one or more MCP servers via stdio and exposes their tools to the agent."
     )
 }
 
@@ -45,14 +49,20 @@ data class AgentAsToolSpec(
     val systemPrompt: String
 )
 
+data class McpServerSpec(
+    val serverCommand: String
+)
+
 data class ProjectToolingSpec(
     val selectedCapabilities: Set<ToolCapability> = emptySet(),
     val annotationToolSetClassName: String = "UserToolSet",
     val annotationTools: List<AnnotationToolSpec> = emptyList(),
-    val agentAsTools: List<AgentAsToolSpec> = emptyList()
+    val agentAsTools: List<AgentAsToolSpec> = emptyList(),
+    val mcpServers: List<McpServerSpec> = emptyList()
 ) {
     val hasBuiltInTools: Boolean = ToolCapability.BUILT_IN in selectedCapabilities
     val hasAnnotationTools: Boolean = ToolCapability.ANNOTATION_BASED in selectedCapabilities
     val hasAgentAsTools: Boolean = ToolCapability.AGENT_AS_TOOL in selectedCapabilities
+    val hasMcpTools: Boolean = ToolCapability.MCP in selectedCapabilities
     val enabled: Boolean = selectedCapabilities.isNotEmpty()
 }
