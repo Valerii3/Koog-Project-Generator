@@ -12,6 +12,7 @@ import com.example.kooggen.model.ProjectFeatureSpec
 import com.example.kooggen.model.ProjectSpec
 import com.example.kooggen.model.ProjectToolingSpec
 import com.example.kooggen.model.ToolCapability
+import com.example.kooggen.model.LongTermMemoryFeatureConfig
 import com.example.kooggen.model.TracingFeatureConfig
 import com.example.kooggen.template.TemplateRegistry
 import com.example.kooggen.zip.ZipProjectStreamWriter
@@ -27,6 +28,7 @@ fun Route.generateRoute() {
         val (templateType, plannerType) = when (req.agentType) {
             "BASIC"          -> AgentTemplateType.BASIC          to null
             "FUNCTIONAL"     -> AgentTemplateType.FUNCTIONAL     to null
+            "GRAPH"          -> AgentTemplateType.GRAPH          to null
             "PLANNER_SIMPLE" -> AgentTemplateType.PLANNER        to PlannerType.SIMPLE_LLM
             "PLANNER_CRITIC" -> AgentTemplateType.PLANNER        to PlannerType.SIMPLE_LLM_WITH_CRITIC
             else -> {
@@ -53,7 +55,8 @@ fun Route.generateRoute() {
             eventHandler = EventHandlerFeatureConfig(enabled = AgentFeatureType.EVENT_HANDLER in selectedFeatures),
             chatMemory = ChatMemoryFeatureConfig(enabled = AgentFeatureType.CHAT_MEMORY in selectedFeatures),
             agentPersistence = AgentPersistenceFeatureConfig(enabled = AgentFeatureType.AGENT_PERSISTENCE in selectedFeatures),
-            tracing = TracingFeatureConfig(enabled = AgentFeatureType.TRACING in selectedFeatures)
+            tracing = TracingFeatureConfig(enabled = AgentFeatureType.TRACING in selectedFeatures),
+            longTermMemory = LongTermMemoryFeatureConfig(enabled = AgentFeatureType.LONG_TERM_MEMORY in selectedFeatures)
         )
 
         val spec = ProjectSpec.fromArtifact(

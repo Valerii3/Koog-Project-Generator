@@ -2,6 +2,7 @@ package com.example.kooggen.backend
 
 import com.example.kooggen.backend.routes.generateRoute
 import com.example.kooggen.backend.routes.optionsRoute
+import com.example.kooggen.backend.routes.previewRoute
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -28,6 +29,7 @@ fun Application.module() {
         route("/api") {
             optionsRoute()
             generateRoute()
+            previewRoute()
         }
     }
 }

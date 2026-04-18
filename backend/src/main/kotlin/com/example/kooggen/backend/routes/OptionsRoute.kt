@@ -17,6 +17,7 @@ fun Route.optionsRoute() {
             agentTypes = listOf(
                 AgentTypeOption("BASIC", "Basic Agent", "Predefined strategy for common use cases."),
                 AgentTypeOption("FUNCTIONAL", "Functional Agent", "Custom strategy via functionalStrategy DSL."),
+                AgentTypeOption("GRAPH", "Graph-based Agent", "Explicit state machine with nodes and edges."),
                 AgentTypeOption("PLANNER_SIMPLE", "SimpleLLMPlanner", "Generates a plan once and follows it."),
                 AgentTypeOption("PLANNER_CRITIC", "SimpleLLMPlanner with Critics", "Extends SimpleLLMPlanner with an LLM-based critic.")
             ),
