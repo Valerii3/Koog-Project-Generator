@@ -1,0 +1,79 @@
+.pane {
+  display: flex;
+  height: 540px;
+  overflow: hidden;
+  border-radius: 0 0 14px 14px;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+}
+
+.pathBar {
+  padding: 8px 16px;
+  background: #f3f3f4;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 0.8rem;
+  font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.code {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 16px 20px;
+  font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #1a1a1a;
+  background: #fff;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.noFile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 300px;
+  color: #aaa;
+  font-size: 0.95rem;
+}
+
+.placeholderIcon {
+  font-size: 2rem;
+  color: #d8d0ff;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #7f52ff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { OptionsResponse } from './types'
-import { fetchOptions, generateProject, triggerDownload } from './api'
+import type { OptionsResponse, PreviewFile } from './types'
+import { fetchOptions, generateProject, previewProject, triggerDownload } from './api'
 import { ArtifactBar } from './components/ArtifactBar'
 import { TabNav } from './components/TabNav'
 import type { TabId } from './components/TabNav'
@@ -8,6 +8,7 @@ import { AgentSection } from './components/AgentSection'
 import { ProviderSection } from './components/ProviderSection'
 import { ToolsSection } from './components/ToolsSection'
 import { FeaturesSection } from './components/FeaturesSection'
+import { PreviewSection } from './components/PreviewSection'
 import './App.css'
 
 function projectName(artifact: string): string {
@@ -25,6 +26,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('agents')
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [previewFiles, setPreviewFiles] = useState<PreviewFile[] | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   useEffect(() => {
     fetchOptions()
@@ -43,6 +46,30 @@ export default function App() {
     const nowBasic = id === 'BASIC'
     if (nowPlanner) setTools([])
     if (!nowBasic) setFeatures([])
+    setPreviewFiles(null)
+  }
+
+  const handleTabChange = async (tab: TabId) => {
+    setActiveTab(tab)
+    if (tab === 'preview') {
+      setPreviewLoading(true)
+      setPreviewFiles(null)
+      setError(null)
+      try {
+        const res = await previewProject({
+          artifact,
+          agentType,
+          provider,
+          tools: toolsDisabled ? [] : tools,
+          features: featuresDisabled ? [] : features,
+        })
+        setPreviewFiles(res.files)
+      } catch (e) {
+        setError(String(e))
+      } finally {
+        setPreviewLoading(false)
+      }
+    }
   }
 
   const toggleTool = (id: string) =>
@@ -105,41 +132,46 @@ export default function App() {
               activeTab={activeTab}
               toolsDisabled={toolsDisabled}
               featuresDisabled={featuresDisabled}
-              onTabChange={setActiveTab}
+              onTabChange={handleTabChange}
             />
 
-            <div className="tab-content">
-              {activeTab === 'agents' && (
-                <AgentSection
-                  agents={options.agentTypes}
-                  selected={agentType}
-                  onSelect={handleAgentSelect}
-                />
-              )}
-              {activeTab === 'providers' && (
-                <ProviderSection
-                  providers={options.providers}
-                  selected={provider}
-                  onSelect={setProvider}
-                />
-              )}
-              {activeTab === 'tools' && (
-                <ToolsSection
-                  tools={options.tools}
-                  selected={tools}
-                  disabled={toolsDisabled}
-                  onToggle={toggleTool}
-                />
-              )}
-              {activeTab === 'features' && (
-                <FeaturesSection
-                  features={options.features}
-                  selected={features}
-                  disabled={featuresDisabled}
-                  onToggle={toggleFeature}
-                />
-              )}
-            </div>
+            {activeTab !== 'preview' && (
+              <div className="tab-content">
+                {activeTab === 'agents' && (
+                  <AgentSection
+                    agents={options.agentTypes}
+                    selected={agentType}
+                    onSelect={handleAgentSelect}
+                  />
+                )}
+                {activeTab === 'providers' && (
+                  <ProviderSection
+                    providers={options.providers}
+                    selected={provider}
+                    onSelect={setProvider}
+                  />
+                )}
+                {activeTab === 'tools' && (
+                  <ToolsSection
+                    tools={options.tools}
+                    selected={tools}
+                    disabled={toolsDisabled}
+                    onToggle={toggleTool}
+                  />
+                )}
+                {activeTab === 'features' && (
+                  <FeaturesSection
+                    features={options.features}
+                    selected={features}
+                    disabled={featuresDisabled}
+                    onToggle={toggleFeature}
+                  />
+                )}
+              </div>
+            )}
+            {activeTab === 'preview' && (
+              <PreviewSection files={previewFiles} loading={previewLoading} />
+            )}
           </div>
         )}
       </main>

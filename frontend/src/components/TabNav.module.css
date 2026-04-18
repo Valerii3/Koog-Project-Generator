@@ -45,3 +45,16 @@
   font-size: 0.75rem;
   font-weight: 400;
 }
+
+.separator {
+  flex: 1;
+}
+
+.previewTab {
+  color: #7f52ff;
+  font-weight: 600;
+}
+
+.previewTab:hover {
+  color: #6a3fd4;
+}

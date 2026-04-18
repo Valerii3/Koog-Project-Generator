@@ -38,3 +38,12 @@ export interface GenerateRequest {
   tools: string[]
   features: string[]
 }
+
+export interface PreviewFile {
+  path: string
+  content: string
+}
+
+export interface PreviewResponse {
+  files: PreviewFile[]
+}
