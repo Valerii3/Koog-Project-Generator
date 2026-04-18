@@ -20,8 +20,8 @@ enum class AgentTemplateType(
     ),
     GRAPH(
         cliLabel = "Graph-based agent",
-        description = "Custom graph strategy with explicit node transitions.",
-        implemented = false,
+        description = "Custom graph strategy with explicit node transitions; visualizable state machine with nodes and edges.",
+        implemented = true,
         archiveSuffix = "graph-agent"
     ),
     PLANNER(
