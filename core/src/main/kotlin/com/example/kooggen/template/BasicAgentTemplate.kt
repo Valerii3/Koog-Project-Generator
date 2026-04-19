@@ -156,7 +156,8 @@ class BasicAgentTemplate : ProjectTemplate {
         }
 
         val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory ||
-            spec.features.hasAgentPersistence || spec.features.hasTracing
+            spec.features.hasAgentPersistence || spec.features.hasTracing ||
+            spec.features.hasLongTermMemory || spec.features.hasAnyOpenTelemetry
         if (hasFeatureInit) {
             append(renderFeatureInitBlock(spec))
             appendLine()
@@ -188,323 +189,113 @@ class BasicAgentTemplate : ProjectTemplate {
     }
 
     private fun renderToolRegistryBlock(spec: ProjectSpec): String = buildString {
-        val parts = mutableListOf<String>()
-        if (spec.tooling.hasBuiltInTools) {
-            parts += "createBuiltInToolRegistry()"
-        }
+        val builtInPart = if (spec.tooling.hasBuiltInTools) "createBuiltInToolRegistry()" else null
 
         val dslLines = mutableListOf<String>()
         if (spec.tooling.hasAnnotationTools) {
-            dslLines += "tools(${spec.tooling.annotationToolSetClassName}().asTools())"
-        }
-        signatureParts += "options: AgentOptions"
-        if (spec.tooling.enabled) {
-            signatureParts += "toolRegistry: ToolRegistry"
-        }
-        appendLine("private fun createAgent(${signatureParts.joinToString(", ")}): AIAgent<String, String> {")
-        provider.executorSetupLines.forEach { setupLine ->
-            appendLine("    $setupLine")
-        }
-        if (provider.executorSetupLines.isNotEmpty()) {
-            appendLine()
-        }
-        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory || spec.features.hasAgentPersistence || spec.features.hasTracing || spec.features.hasLongTermMemory || spec.features.hasAnyOpenTelemetry
-        if (hasFeatureInit) {
-            if (spec.features.hasLongTermMemory) {
-                appendLine("    @OptIn(ExperimentalAgentsApi::class)")
-                appendLine("    val longTermMemoryStorage = InMemoryRecordStorage()")
-                appendLine()
-            }
-            appendLine("    val installFeatures: AIAgent<String, String>.() -> Unit = {")
-            if (spec.features.hasTracing) {
-                appendLine("        val logger = KotlinLogging.logger(\"koog.tracing\")")
-                appendLine("        install(Tracing) {")
-                appendLine("            addMessageProcessor(TraceFeatureMessageLogWriter(logger))")
-                appendLine("        }")
-            }
-            if (spec.features.hasEventHandler) {
-                appendLine("        handleEvents {")
-                if (spec.features.eventHandler.includeOnToolCallStarting) {
-                    appendLine("            onToolCallStarting { eventContext ->")
-                    appendLine("                println(\"Tool called: ${'$'}{eventContext.toolName} with args ${'$'}{eventContext.toolArgs}\")")
-                    appendLine("            }")
-                }
-                if (spec.features.eventHandler.includeOnAgentCompleted) {
-                    appendLine("            onAgentCompleted { eventContext ->")
-                    appendLine("                println(\"Agent finished with result: ${'$'}{eventContext.result}\")")
-                    appendLine("            }")
-                }
-                appendLine("        }")
-            }
-            if (spec.features.hasChatMemory) {
-                appendLine("        install(ChatMemory) {")
-                appendLine("            windowSize(${spec.features.chatMemory.windowSize})")
-                appendLine("        }")
-            }
-            if (spec.features.hasAgentPersistence) {
-                appendLine("        install(Persistence) {")
-                appendLine("            storage = InMemoryPersistenceStorageProvider()")
-                appendLine("            enableAutomaticPersistence = false")
-                appendLine("        }")
-            }
-            if (spec.features.hasLongTermMemory) {
-                appendLine("        @OptIn(ExperimentalAgentsApi::class)")
-                appendLine("        install(LongTermMemory) {")
-                appendLine("            retrieval {")
-                appendLine("                storage = longTermMemoryStorage")
-                appendLine("                searchStrategy = SimilaritySearchStrategy(topK = ${spec.features.longTermMemory.topK})")
-                appendLine("            }")
-                appendLine("            ingestion {")
-                appendLine("                storage = longTermMemoryStorage")
-                appendLine("                enableAutomaticIngestion = ${spec.features.longTermMemory.enableAutomaticIngestion}")
-                appendLine("            }")
-                appendLine("        }")
-            }
-            if (spec.features.hasAnyOpenTelemetry) {
-                appendLine("        install(OpenTelemetry) {")
-                if (spec.features.hasDatadogExporter) {
-                    appendLine("            addDatadogExporter()")
-                }
-                if (spec.features.hasLangfuseExporter) {
-                    appendLine("            addLangfuseExporter()")
-                }
-                if (spec.features.hasWeaveExporter) {
-                    appendLine("            addWeaveExporter()")
-                }
-                appendLine("        }")
-            }
-            appendLine("    }")
-            appendLine()
-        }
-        appendLine("    return when {")
-        append(renderAgentConstructorBlock(spec, condition = "options.temperature != null && options.maxIterations != null", includeTemperature = true, includeMaxIterations = true))
-        appendLine()
-        append(renderAgentConstructorBlock(spec, condition = "options.temperature != null", includeTemperature = true, includeMaxIterations = false))
-        appendLine()
-        append(renderAgentConstructorBlock(spec, condition = "options.maxIterations != null", includeTemperature = false, includeMaxIterations = true))
-        appendLine()
-        append(renderAgentConstructorBlock(spec, condition = "else", includeTemperature = false, includeMaxIterations = false))
-        appendLine("    }")
-        append("}")
-    }
-
-    private fun renderAgentConstructorBlock(
-        spec: ProjectSpec,
-        condition: String,
-        includeTemperature: Boolean,
-        includeMaxIterations: Boolean
-    ): String = buildString {
-        val provider = spec.llmProvider
-        appendLine("        $condition -> AIAgent(")
-        appendLine("            promptExecutor = ${provider.executorExpression},")
-        appendLine("            llmModel = ${provider.modelExpression},")
-        appendLine("            systemPrompt = options.systemPrompt,")
-        if (includeTemperature) {
-            appendLine("            temperature = options.temperature,")
-        }
-        if (includeMaxIterations) {
-            appendLine("            maxIterations = options.maxIterations,")
-        }
-        if (spec.tooling.enabled) {
-            appendLine("            toolRegistry = toolRegistry,")
-        }
-        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory || spec.features.hasAgentPersistence || spec.features.hasTracing || spec.features.hasLongTermMemory || spec.features.hasAnyOpenTelemetry
-        if (hasFeatureInit) {
-            appendLine("            init = installFeatures")
-        }
-        appendLine("        )")
-    }
-
-    private fun renderToolFiles(spec: ProjectSpec): List<GeneratedFile> {
-        if (!spec.tooling.enabled) {
-            return emptyList()
-        }
-        val base = "${spec.projectName}/src/main/kotlin/${spec.packagePath}/tools"
-        val out = mutableListOf(
-            GeneratedFile("$base/ToolRegistry.kt", renderToolRegistryKt(spec))
-        )
-        if (spec.tooling.hasBuiltInTools) {
-            out += GeneratedFile("$base/BuiltInTools.kt", renderBuiltInToolsKt(spec))
-        }
-        if (spec.tooling.hasAnnotationTools) {
-            out += GeneratedFile("$base/AnnotationTools.kt", renderAnnotationToolsKt(spec))
+            dslLines += "        tools(${spec.tooling.annotationToolSetClassName}().asTools())"
         }
         if (spec.tooling.hasAgentAsTools) {
-            out += GeneratedFile("$base/AgentAsToolRegistry.kt", renderAgentAsToolRegistryKt(spec))
             spec.tooling.agentAsTools.forEach { agentTool ->
-                val fileName = "${toGeneratedAgentTypeName(agentTool.agentName)}Tool.kt"
-                out += GeneratedFile(
-                    "$base/agents/$fileName",
-                    renderSingleAgentAsToolFile(spec, agentTool)
-                )
+                dslLines += "        tool(${toAgentToolValName(agentTool.agentName)})"
             }
         }
-        if (spec.tooling.hasMcpTools) {
-            out += GeneratedFile("$base/McpTools.kt", renderMcpToolsKt(spec))
-        }
-        return out
-    }
 
-    private fun renderToolRegistryKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        if (spec.tooling.hasBuiltInTools) {
-            appendLine("import ${spec.packageName}.tools.createBuiltInToolRegistry")
-        }
-        if (spec.tooling.hasAnnotationTools) {
-            appendLine("import ${spec.packageName}.tools.createAnnotationToolRegistry")
-        }
-        if (spec.tooling.hasAgentAsTools) {
-            appendLine("import ${spec.packageName}.tools.createAgentAsToolRegistry")
-        }
-        appendLine()
-        val suspendModifier = if (spec.tooling.hasMcpTools) "suspend " else ""
-        appendLine("${suspendModifier}fun createToolRegistry(apiKey: String? = null): ToolRegistry {")
-        appendLine("    val registries = mutableListOf<ToolRegistry>()")
-        if (spec.tooling.hasBuiltInTools) {
-            appendLine("    registries += createBuiltInToolRegistry()")
-        }
-        if (spec.tooling.hasAnnotationTools) {
-            appendLine("    registries += createAnnotationToolRegistry()")
-        }
-        if (spec.tooling.hasAgentAsTools) {
-            appendLine("    registries += createAgentAsToolRegistry(apiKey)")
-        }
-        if (spec.tooling.hasMcpTools) {
-            appendLine("    registries += createMcpToolRegistry()")
-        }
-        appendLine("    return registries.fold(ToolRegistry { }) { acc, item -> acc + item }")
-        appendLine("}")
-    }
+        val dslPart = if (dslLines.isNotEmpty()) buildString {
+            appendLine("ToolRegistry {")
+            dslLines.forEach { appendLine(it) }
+            append("    }")
+        } else null
 
-    private fun renderMcpToolsKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.mcp.McpToolRegistryProvider")
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine()
-        appendLine("suspend fun createMcpToolRegistry(): ToolRegistry {")
-        val servers = spec.tooling.mcpServers.ifEmpty {
-            listOf(com.example.kooggen.model.McpServerSpec("path/to/mcp/server"))
-        }
-        if (servers.size == 1) {
-            appendLine("    val process = ProcessBuilder(\"${escapeKotlinString(servers[0].serverCommand)}\").start()")
-            appendLine("    return McpToolRegistryProvider.fromProcess(process = process)")
+        val parts = listOfNotNull(builtInPart, dslPart)
+
+        if (parts.isEmpty()) {
+            append("    val toolRegistry = ToolRegistry { }")
         } else {
-            servers.forEachIndexed { i, server ->
-                appendLine("    val process${i + 1} = ProcessBuilder(\"${escapeKotlinString(server.serverCommand)}\").start()")
+            append("    val toolRegistry = ${parts.joinToString(" + ")}")
+        }
+        appendLine()
+    }
+
+    private fun renderFeatureInitBlock(spec: ProjectSpec): String = buildString {
+        if (spec.features.hasLongTermMemory) {
+            appendLine("    @OptIn(ExperimentalAgentsApi::class)")
+            appendLine("    val longTermMemoryStorage = InMemoryRecordStorage()")
+            appendLine()
+        }
+        appendLine("    val installFeatures: AIAgent<String, String>.() -> Unit = {")
+        if (spec.features.hasTracing) {
+            appendLine("        val logger = KotlinLogging.logger(\"koog.tracing\")")
+            appendLine("        install(Tracing) {")
+            appendLine("            addMessageProcessor(TraceFeatureMessageLogWriter(logger))")
+            appendLine("        }")
+        }
+        if (spec.features.hasEventHandler) {
+            appendLine("        handleEvents {")
+            if (spec.features.eventHandler.includeOnToolCallStarting) {
+                appendLine("            onToolCallStarting { eventContext ->")
+                appendLine("                println(\"Tool called: ${'$'}{eventContext.toolName} with args ${'$'}{eventContext.toolArgs}\")")
+                appendLine("            }")
             }
-            servers.forEachIndexed { i, _ ->
-                appendLine("    val registry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
+            if (spec.features.eventHandler.includeOnAgentCompleted) {
+                appendLine("            onAgentCompleted { eventContext ->")
+                appendLine("                println(\"Agent finished with result: ${'$'}{eventContext.result}\")")
+                appendLine("            }")
             }
-            val combined = (1..servers.size).joinToString(" + ") { "registry$it" }
-            appendLine("    return $combined")
+            appendLine("        }")
         }
-        appendLine("}")
+        if (spec.features.hasChatMemory) {
+            appendLine("        install(ChatMemory) {")
+            appendLine("            windowSize(${spec.features.chatMemory.windowSize})")
+            appendLine("        }")
+        }
+        if (spec.features.hasAgentPersistence) {
+            appendLine("        install(Persistence) {")
+            appendLine("            storage = InMemoryPersistenceStorageProvider()")
+            appendLine("            enableAutomaticPersistence = false")
+            appendLine("        }")
+        }
+        if (spec.features.hasLongTermMemory) {
+            appendLine("        @OptIn(ExperimentalAgentsApi::class)")
+            appendLine("        install(LongTermMemory) {")
+            appendLine("            retrieval {")
+            appendLine("                storage = longTermMemoryStorage")
+            appendLine("                searchStrategy = SimilaritySearchStrategy(topK = ${spec.features.longTermMemory.topK})")
+            appendLine("            }")
+            appendLine("            ingestion {")
+            appendLine("                storage = longTermMemoryStorage")
+            appendLine("                enableAutomaticIngestion = ${spec.features.longTermMemory.enableAutomaticIngestion}")
+            appendLine("            }")
+            appendLine("        }")
+        }
+        if (spec.features.hasAnyOpenTelemetry) {
+            appendLine("        install(OpenTelemetry) {")
+            if (spec.features.hasDatadogExporter) {
+                appendLine("            addDatadogExporter()")
+            }
+            if (spec.features.hasLangfuseExporter) {
+                appendLine("            addLangfuseExporter()")
+            }
+            if (spec.features.hasWeaveExporter) {
+                appendLine("            addWeaveExporter()")
+            }
+            appendLine("        }")
+        }
+        append("    }")
     }
 
-    private fun renderBuiltInToolsKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine("import ai.koog.agents.ext.tool.AskUser")
-        appendLine("import ai.koog.agents.ext.tool.ExitTool")
-        appendLine("import ai.koog.agents.ext.tool.SayToUser")
-        appendLine("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
-        appendLine("import ai.koog.agents.ext.tool.file.ReadFileTool")
-        appendLine("import ai.koog.agents.ext.tool.file.WriteFileTool")
-        appendLine("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
-        appendLine()
-        appendLine("fun createBuiltInToolRegistry(): ToolRegistry = ToolRegistry {")
-        appendLine("    tool(SayToUser)")
-        appendLine("    tool(AskUser)")
-        appendLine("    tool(ExitTool)")
-        appendLine("    tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))")
-        appendLine("    tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))")
-        appendLine("    tool(WriteFileTool(JVMFileSystemProvider.ReadWrite))")
-        appendLine("}")
-    }
-
-    private fun renderAnnotationToolsKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine("import ai.koog.agents.core.tools.annotations.LLMDescription")
-        appendLine("import ai.koog.agents.core.tools.annotations.Tool")
-        appendLine("import ai.koog.agents.core.tools.reflect.ToolSet")
-        appendLine("import ai.koog.agents.core.tools.reflect.asTools")
-        appendLine()
-        appendLine("fun createAnnotationToolRegistry(): ToolRegistry = ToolRegistry {")
-        appendLine("    tools(${spec.tooling.annotationToolSetClassName}().asTools())")
-        appendLine("}")
-        appendLine()
-        append(renderAnnotationToolSetClass(spec.tooling))
-    }
-
-    private fun renderAgentAsToolRegistryKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        spec.tooling.agentAsTools.forEach { agentTool ->
-            appendLine("import ${spec.packageName}.tools.agents.create${toGeneratedAgentTypeName(agentTool.agentName)}Tool")
+    private fun renderBuiltInToolRegistryFunction(): String = """
+        fun createBuiltInToolRegistry(): ToolRegistry = ToolRegistry {
+            tool(SayToUser)
+            tool(AskUser)
+            tool(ExitTool)
+            tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
+            tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
+            tool(WriteFileTool(JVMFileSystemProvider.ReadWrite))
         }
-        appendLine()
-        appendLine("fun createAgentAsToolRegistry(apiKey: String? = null): ToolRegistry = ToolRegistry {")
-        spec.tooling.agentAsTools.forEach { agentTool ->
-            appendLine("    tool(create${toGeneratedAgentTypeName(agentTool.agentName)}Tool(apiKey))")
-        }
-        appendLine("}")
-    }
+    """.trimIndent()
 
-    private fun renderSingleAgentAsToolFile(spec: ProjectSpec, tool: AgentAsToolSpec): String = buildString {
-        val provider = spec.llmProvider
-        val agentTypeName = toGeneratedAgentTypeName(tool.agentName)
-        val funcName = "create${agentTypeName}Tool"
-        val nestedRegistryFunction = "create${agentTypeName}NestedToolRegistry"
-        val systemPromptConst = "${agentTypeName.uppercase()}_SYSTEM_PROMPT"
-        appendLine("package ${spec.packageName}.tools.agents")
-        appendLine()
-        appendLine("import ai.koog.agents.core.agent.AIAgentService")
-        appendLine("import ai.koog.agents.core.agent.createAgentTool")
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        provider.importLines.forEach { appendLine(it) }
-        appendLine()
-        appendLine("private const val $systemPromptConst = \"${escapeKotlinString(tool.systemPrompt)}\"")
-        appendLine()
-        appendLine("private fun $nestedRegistryFunction(): ToolRegistry = ToolRegistry {")
-        appendLine("    // TODO: Add nested-agent specific tools here (built-in, annotation-based, or agent tools).")
-        appendLine("}")
-        appendLine()
-        appendLine("fun $funcName(rawApiKey: String? = null) = run {")
-        if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            appendLine("    val apiKey = requireNotNull(rawApiKey) { \"Environment variable $envVar is required.\" }")
-        } else {
-            appendLine("    // Provider ${provider.displayName} does not require an API key.")
-        }
-        provider.executorSetupLines.forEach { setupLine ->
-            appendLine("    $setupLine")
-        }
-        appendLine()
-        appendLine("    val service = AIAgentService(")
-        appendLine("        promptExecutor = ${provider.executorExpression},")
-        appendLine("        llmModel = ${provider.modelExpression},")
-        appendLine("        systemPrompt = $systemPromptConst,")
-        appendLine("        toolRegistry = $nestedRegistryFunction()")
-        appendLine("    )")
-        appendLine("    // TODO: Add nested-agent feature setup in this file when needed")
-        appendLine("    // (for example event handling, memory, persistence, tracing).")
-        appendLine()
-        appendLine("    service.createAgentTool(")
-        appendLine("        agentName = \"${escapeKotlinString(tool.agentName)}\",")
-        appendLine("        agentDescription = \"${escapeKotlinString(tool.agentDescription)}\",")
-        appendLine("        inputDescription = \"${escapeKotlinString(tool.inputDescription)}\"")
-        appendLine("    )")
-        appendLine("}")
-    }
-
-    private fun renderAnnotationToolSetClass(tooling: ProjectToolingSpec): String = buildString {
+    private fun renderSampleToolSetClass(tooling: ProjectToolingSpec): String = buildString {
         appendLine("@LLMDescription(\"User-defined annotation-based tools\")")
         appendLine("class ${tooling.annotationToolSetClassName} : ToolSet {")
 
