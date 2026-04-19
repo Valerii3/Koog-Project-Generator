@@ -12,7 +12,7 @@ class GraphAgentTemplate : ProjectTemplate {
     override fun render(spec: ProjectSpec): List<GeneratedFile> {
         val base = spec.projectName
 
-        val files = mutableListOf(
+        return listOf(
             GeneratedFile("$base/settings.gradle.kts", renderSettingsGradle(spec)),
             GeneratedFile("$base/build.gradle.kts", renderBuildGradle(spec)),
             GeneratedFile("$base/gradle.properties", "kotlin.code.style=official\n"),
@@ -21,10 +21,6 @@ class GraphAgentTemplate : ProjectTemplate {
             GeneratedFile("$base/README.md", renderReadme(spec)),
             GeneratedFile("$base/src/main/kotlin/${spec.packagePath}/Main.kt", renderMainKt(spec))
         )
-
-        files += renderToolFiles(spec)
-
-        return files
     }
 
     private fun renderSettingsGradle(spec: ProjectSpec): String =
@@ -77,7 +73,29 @@ class GraphAgentTemplate : ProjectTemplate {
         source.addImport("import kotlinx.coroutines.runBlocking")
         if (spec.tooling.enabled) {
             source.addImport("import ai.koog.agents.core.tools.ToolRegistry")
-            source.addImport("import ${spec.packageName}.tools.createToolRegistry")
+            if (spec.tooling.hasBuiltInTools) {
+                source.addImport("import ai.koog.agents.ext.tool.AskUser")
+                source.addImport("import ai.koog.agents.ext.tool.ExitTool")
+                source.addImport("import ai.koog.agents.ext.tool.SayToUser")
+                source.addImport("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.ReadFileTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.WriteFileTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
+            }
+            if (spec.tooling.hasAnnotationTools) {
+                source.addImport("import ai.koog.agents.core.tools.annotations.LLMDescription")
+                source.addImport("import ai.koog.agents.core.tools.annotations.Tool")
+                source.addImport("import ai.koog.agents.core.tools.reflect.ToolSet")
+                source.addImport("import ai.koog.agents.core.tools.reflect.asTools")
+            }
+            if (spec.tooling.hasAgentAsTools) {
+                source.addImport("import ai.koog.agents.core.agent.AIAgentService")
+                source.addImport("import ai.koog.agents.core.agent.createAgentTool")
+                source.addImport("import ai.koog.agents.core.tools.reflect.typeToken")
+            }
+            if (spec.tooling.hasMcpTools) {
+                source.addImport("import ai.koog.agents.mcp.McpToolRegistryProvider")
+            }
         }
 
         if (provider.requiresApiKey) {
@@ -85,6 +103,20 @@ class GraphAgentTemplate : ProjectTemplate {
         }
         provider.executorSetupLines.forEach { setupLine ->
             source.addDeclaration("private $setupLine")
+        }
+        if (spec.tooling.hasAnnotationTools) {
+            source.addDeclaration(renderAnnotationToolSetClass(spec.tooling))
+        }
+        if (spec.tooling.hasBuiltInTools) {
+            source.addDeclaration(renderBuiltInToolRegistryFunction())
+        }
+        if (spec.tooling.hasAgentAsTools) {
+            effectiveAgentAsTools(spec).forEach { agentTool ->
+                source.addDeclaration(renderAgentAsToolVals(spec, agentTool))
+            }
+        }
+        if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) {
+            source.addDeclaration(renderUserToolRegistryFunction(spec))
         }
 
         source.addDeclaration(renderTopLevelAgentStrategy(spec))
@@ -127,12 +159,12 @@ class GraphAgentTemplate : ProjectTemplate {
 
         appendLine("fun main() = runBlocking {")
 
+        if (spec.tooling.hasMcpTools) {
+            append(renderMcpMainBlock(spec))
+            appendLine()
+        }
         if (spec.tooling.enabled) {
-            if (provider.requiresApiKey) {
-                appendLine("    val toolRegistry = createToolRegistry(apiKey)")
-            } else {
-                appendLine("    val toolRegistry = createToolRegistry()")
-            }
+            append(renderToolRegistryBlock(spec))
             appendLine()
         }
 
@@ -151,167 +183,69 @@ class GraphAgentTemplate : ProjectTemplate {
         append("}")
     }
 
-    private fun renderToolFiles(spec: ProjectSpec): List<GeneratedFile> {
-        if (!spec.tooling.enabled) {
-            return emptyList()
+    private fun renderToolRegistryBlock(spec: ProjectSpec): String = buildString {
+        val parts = mutableListOf<String>()
+        if (spec.tooling.hasBuiltInTools) parts += "createBuiltInToolRegistry()"
+        if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) parts += "createUserToolRegistry()"
+        if (spec.tooling.hasMcpTools) parts += "mcpToolRegistry"
+
+        if (parts.isEmpty()) {
+            append("    val toolRegistry = ToolRegistry { }")
+        } else {
+            append("    val toolRegistry = ${parts.joinToString(" + ")}")
         }
-        val base = "${spec.projectName}/src/main/kotlin/${spec.packagePath}/tools"
-        val out = mutableListOf(
-            GeneratedFile("$base/ToolRegistry.kt", renderToolRegistryKt(spec))
-        )
-        if (spec.tooling.hasBuiltInTools) {
-            out += GeneratedFile("$base/BuiltInTools.kt", renderBuiltInToolsKt(spec))
-        }
-        if (spec.tooling.hasAnnotationTools) {
-            out += GeneratedFile("$base/AnnotationTools.kt", renderAnnotationToolsKt(spec))
-        }
-        if (spec.tooling.hasAgentAsTools) {
-            out += GeneratedFile("$base/AgentAsToolRegistry.kt", renderAgentAsToolRegistryKt(spec))
-        }
-        if (spec.tooling.hasMcpTools) {
-            out += GeneratedFile("$base/McpTools.kt", renderMcpToolsKt(spec))
-        }
-        return out
+        appendLine()
     }
 
-    private fun renderToolRegistryKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        if (spec.tooling.hasBuiltInTools) {
-            appendLine("import ${spec.packageName}.tools.createBuiltInToolRegistry")
-        }
-        if (spec.tooling.hasAnnotationTools) {
-            appendLine("import ${spec.packageName}.tools.createAnnotationToolRegistry")
-        }
-        if (spec.tooling.hasAgentAsTools) {
-            appendLine("import ${spec.packageName}.tools.createAgentAsToolRegistry")
-        }
-        appendLine()
-        val suspendModifier = if (spec.tooling.hasMcpTools) "suspend " else ""
-        appendLine("${suspendModifier}fun createToolRegistry(apiKey: String? = null): ToolRegistry {")
-        appendLine("    val registries = mutableListOf<ToolRegistry>()")
-        if (spec.tooling.hasBuiltInTools) {
-            appendLine("    registries += createBuiltInToolRegistry()")
-        }
-        if (spec.tooling.hasAnnotationTools) {
-            appendLine("    registries += createAnnotationToolRegistry()")
-        }
-        if (spec.tooling.hasAgentAsTools) {
-            appendLine("    registries += createAgentAsToolRegistry()")
-        }
-        if (spec.tooling.hasMcpTools) {
-            appendLine("    registries += createMcpToolRegistry()")
-        }
-        appendLine("    return registries.fold(ToolRegistry { }) { acc, item -> acc + item }")
-        appendLine("}")
-    }
-
-    private fun renderMcpToolsKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.mcp.McpToolRegistryProvider")
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine()
-        appendLine("suspend fun createMcpToolRegistry(): ToolRegistry {")
+    private fun renderMcpMainBlock(spec: ProjectSpec): String = buildString {
         val servers = spec.tooling.mcpServers.ifEmpty {
-            listOf(com.example.kooggen.model.McpServerSpec("path/to/mcp/server"))
+            listOf(com.example.kooggen.model.McpServerSpec("java -jar mcp-server.jar"))
         }
         if (servers.size == 1) {
-            appendLine("    val process = ProcessBuilder(\"${escapeKotlinString(servers[0].serverCommand)}\").start()")
-            appendLine("    return McpToolRegistryProvider.fromProcess(process = process)")
+            val args = servers[0].serverCommand.split(" ")
+                .filter { it.isNotBlank() }
+                .joinToString(", ") { "\"${escapeKotlinString(it)}\"" }
+            appendLine("    val process = ProcessBuilder($args).start()")
+            appendLine("    val mcpToolRegistry = McpToolRegistryProvider.fromProcess(process = process)")
         } else {
             servers.forEachIndexed { i, server ->
-                appendLine("    val process${i + 1} = ProcessBuilder(\"${escapeKotlinString(server.serverCommand)}\").start()")
+                val args = server.serverCommand.split(" ")
+                    .filter { it.isNotBlank() }
+                    .joinToString(", ") { "\"${escapeKotlinString(it)}\"" }
+                appendLine("    val process${i + 1} = ProcessBuilder($args).start()")
             }
             servers.forEachIndexed { i, _ ->
-                appendLine("    val registry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
+                appendLine("    val mcpRegistry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
             }
-            val combined = (1..servers.size).joinToString(" + ") { "registry$it" }
-            appendLine("    return $combined")
+            val combined = (1..servers.size).joinToString(" + ") { "mcpRegistry$it" }
+            appendLine("    val mcpToolRegistry = $combined")
         }
-        appendLine("}")
     }
 
-    private fun renderBuiltInToolsKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine("import ai.koog.agents.ext.tool.AskUser")
-        appendLine("import ai.koog.agents.ext.tool.ExitTool")
-        appendLine("import ai.koog.agents.ext.tool.SayToUser")
-        appendLine("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
-        appendLine("import ai.koog.agents.ext.tool.file.ReadFileTool")
-        appendLine("import ai.koog.agents.ext.tool.file.WriteFileTool")
-        appendLine("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
-        appendLine()
-        appendLine("fun createBuiltInToolRegistry(): ToolRegistry = ToolRegistry {")
-        appendLine("    tool(SayToUser)")
-        appendLine("    tool(AskUser)")
-        appendLine("    tool(ExitTool)")
-        appendLine("    tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))")
-        appendLine("    tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))")
-        appendLine("    tool(WriteFileTool(JVMFileSystemProvider.ReadWrite))")
-        appendLine("}")
-    }
-
-    private fun renderAnnotationToolsKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine("import ai.koog.agents.core.tools.annotations.LLMDescription")
-        appendLine("import ai.koog.agents.core.tools.annotations.Tool")
-        appendLine("import ai.koog.agents.core.tools.reflect.ToolSet")
-        appendLine("import ai.koog.agents.core.tools.reflect.asTools")
-        appendLine()
-        appendLine("fun createAnnotationToolRegistry(): ToolRegistry = ToolRegistry {")
-        appendLine("    tools(${spec.tooling.annotationToolSetClassName}().asTools())")
-        appendLine("}")
-        appendLine()
-        append(renderAnnotationToolSetClass(spec.tooling))
-    }
-
-    private fun renderAgentAsToolRegistryKt(spec: ProjectSpec): String = buildString {
-        val provider = spec.llmProvider
-        val agentTools = effectiveAgentAsTools(spec)
-
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.agent.AIAgentService")
-        appendLine("import ai.koog.agents.core.agent.createAgentTool")
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        appendLine("import ai.koog.agents.core.tools.reflect.typeToken")
-        provider.importLines.forEach { appendLine(it) }
-        appendLine()
-
-        if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            appendLine("private val apiKey: String = System.getenv(\"$envVar\")")
-            appendLine("    ?: error(\"Environment variable $envVar is not set.\")")
-            appendLine()
+    private fun renderUserToolRegistryFunction(spec: ProjectSpec): String = buildString {
+        appendLine("fun createUserToolRegistry(): ToolRegistry = ToolRegistry {")
+        if (spec.tooling.hasAnnotationTools) {
+            appendLine("    tools(${spec.tooling.annotationToolSetClassName}().asTools())")
         }
-        provider.executorSetupLines.forEach { setupLine ->
-            appendLine("private $setupLine")
-        }
-        if (provider.executorSetupLines.isNotEmpty()) {
-            appendLine()
-        }
-
-        agentTools.forEachIndexed { index, agentTool ->
-            append(renderAgentAsToolVals(spec, agentTool))
-            if (index != agentTools.lastIndex) {
-                appendLine()
-                appendLine()
+        if (spec.tooling.hasAgentAsTools) {
+            effectiveAgentAsTools(spec).forEach { agentTool ->
+                appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
             }
+            appendLine("    // Add other tools as needed")
         }
-        appendLine()
-        appendLine("fun createAgentAsToolRegistry(): ToolRegistry = ToolRegistry {")
-        agentTools.forEach { agentTool ->
-            appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
-        }
-        appendLine("    // Add other tools as needed")
-        appendLine("}")
+        append("}")
     }
+
+    private fun renderBuiltInToolRegistryFunction(): String = """
+        fun createBuiltInToolRegistry(): ToolRegistry = ToolRegistry {
+            tool(SayToUser)
+            tool(AskUser)
+            tool(ExitTool)
+            tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
+            tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
+            tool(WriteFileTool(JVMFileSystemProvider.ReadWrite))
+        }
+    """.trimIndent()
 
     private fun effectiveAgentAsTools(spec: ProjectSpec): List<AgentAsToolSpec> =
         spec.tooling.agentAsTools.ifEmpty {
@@ -450,16 +384,15 @@ class GraphAgentTemplate : ProjectTemplate {
         appendLine("- `AIAgent` wired to the graph strategy")
         appendLine("- LLM provider: ${spec.llmProvider.displayName}")
         if (spec.tooling.enabled) {
-            appendLine("- Tool registry wiring in `src/main/kotlin/${spec.packagePath}/tools/ToolRegistry.kt`")
+            appendLine("- Tool registry wiring is inlined in `Main.kt`")
             if (spec.tooling.hasBuiltInTools) {
-                appendLine("- Built-in tools enabled in `BuiltInTools.kt` (chat + file tools)")
+                appendLine("- Built-in tools via `createBuiltInToolRegistry()` (chat + file tools)")
             }
             if (spec.tooling.hasAnnotationTools) {
-                appendLine("- Annotation-based tool stubs with TODO implementations in `AnnotationTools.kt`")
+                appendLine("- Annotation-based tools via `${spec.tooling.annotationToolSetClassName}` with TODO stubs")
             }
             if (spec.tooling.hasAgentAsTools) {
-                appendLine("- Agent-as-tool registry in `AgentAsToolRegistry.kt`")
-                appendLine("- Nested agent tool declarations are generated directly in `AgentAsToolRegistry.kt`")
+                appendLine("- Agent-as-tool vals declared at top level in `Main.kt`")
             }
         }
     }
