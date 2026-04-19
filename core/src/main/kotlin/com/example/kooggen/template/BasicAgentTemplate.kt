@@ -112,6 +112,9 @@ class BasicAgentTemplate : ProjectTemplate {
                 source.addImport("import ai.koog.agents.core.agent.createAgentTool")
                 source.addImport("import ai.koog.agents.core.tools.reflect.typeToken")
             }
+            if (spec.tooling.hasMcpTools) {
+                source.addImport("import ai.koog.agents.mcp.McpToolRegistryProvider")
+            }
         }
 
         if (provider.requiresApiKey) {
@@ -134,6 +137,9 @@ class BasicAgentTemplate : ProjectTemplate {
         }
         if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) {
             source.addDeclaration(renderUserToolRegistryFunction(spec))
+        }
+        if (spec.tooling.hasMcpTools) {
+            source.addDeclaration(renderMcpTopLevelVals(spec))
         }
 
         source.addDeclaration(renderMainFunction(spec))
@@ -195,6 +201,7 @@ class BasicAgentTemplate : ProjectTemplate {
         val parts = mutableListOf<String>()
         if (spec.tooling.hasBuiltInTools) parts += "createBuiltInToolRegistry()"
         if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) parts += "createUserToolRegistry()"
+        if (spec.tooling.hasMcpTools) parts += "mcpToolRegistry"
 
         if (parts.isEmpty()) {
             append("    val toolRegistry = ToolRegistry { }")
@@ -202,6 +209,36 @@ class BasicAgentTemplate : ProjectTemplate {
             append("    val toolRegistry = ${parts.joinToString(" + ")}")
         }
         appendLine()
+    }
+
+    private fun renderMcpTopLevelVals(spec: ProjectSpec): String = buildString {
+        val servers = spec.tooling.mcpServers.ifEmpty {
+            listOf(com.example.kooggen.model.McpServerSpec("java -jar mcp-server.jar"))
+        }
+        if (servers.size == 1) {
+            val args = servers[0].serverCommand.split(" ")
+                .filter { it.isNotBlank() }
+                .joinToString(", ") { "\"${escapeKotlinString(it)}\"" }
+            appendLine("val process = ProcessBuilder($args).start()")
+            appendLine()
+            appendLine("val mcpToolRegistry = McpToolRegistryProvider.fromProcess(")
+            append("    process = process")
+            appendLine(")")
+        } else {
+            servers.forEachIndexed { i, server ->
+                val args = server.serverCommand.split(" ")
+                    .filter { it.isNotBlank() }
+                    .joinToString(", ") { "\"${escapeKotlinString(it)}\"" }
+                appendLine("val process${i + 1} = ProcessBuilder($args).start()")
+            }
+            appendLine()
+            servers.forEachIndexed { i, _ ->
+                appendLine("val mcpRegistry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
+            }
+            appendLine()
+            val combined = (1..servers.size).joinToString(" + ") { "mcpRegistry$it" }
+            append("val mcpToolRegistry = $combined")
+        }
     }
 
     private fun renderUserToolRegistryFunction(spec: ProjectSpec): String = buildString {
