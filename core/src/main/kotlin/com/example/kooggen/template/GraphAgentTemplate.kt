@@ -64,7 +64,15 @@ class GraphAgentTemplate : ProjectTemplate {
         val source = KotlinSourceFile(spec.packageName)
 
         source.addImport("import ai.koog.agents.core.agent.AIAgent")
-        source.addImport("import ai.koog.agents.local.strategy.strategy")
+        source.addImport("import ai.koog.agents.core.dsl.builder.forwardTo")
+        source.addImport("import ai.koog.agents.core.dsl.builder.strategy")
+        source.addImport("import ai.koog.agents.core.dsl.extension.nodeLLMRequest")
+        source.addImport("import ai.koog.agents.core.dsl.extension.onAssistantMessage")
+        if (spec.tooling.enabled) {
+            source.addImport("import ai.koog.agents.core.dsl.extension.nodeExecuteTool")
+            source.addImport("import ai.koog.agents.core.dsl.extension.nodeLLMSendToolResult")
+            source.addImport("import ai.koog.agents.core.dsl.extension.onToolCall")
+        }
         source.addImports(provider.importLines)
         source.addImport("import kotlinx.coroutines.runBlocking")
         if (spec.tooling.enabled) {
@@ -72,9 +80,46 @@ class GraphAgentTemplate : ProjectTemplate {
             source.addImport("import ${spec.packageName}.tools.createToolRegistry")
         }
 
+        if (provider.requiresApiKey) {
+            source.addDeclaration(renderTopLevelApiKey(provider))
+        }
+        provider.executorSetupLines.forEach { setupLine ->
+            source.addDeclaration("private $setupLine")
+        }
+
+        source.addDeclaration(renderTopLevelAgentStrategy(spec))
         source.addDeclaration(renderMainFunction(spec))
 
         return source.render()
+    }
+
+    private fun renderTopLevelApiKey(provider: com.example.kooggen.model.LlmProvider): String {
+        val envVar = requireNotNull(provider.envVarName)
+        return """
+            private val apiKey: String = System.getenv("$envVar")
+                ?: error("Environment variable $envVar is not set.")
+        """.trimIndent()
+    }
+
+    private fun renderTopLevelAgentStrategy(spec: ProjectSpec): String = buildString {
+        appendLine("val agentStrategy = strategy<String, String>(\"${spec.projectName} strategy\") {")
+        appendLine("    val nodeSendInput by nodeLLMRequest()")
+        if (spec.tooling.enabled) {
+            appendLine("    val nodeExecuteTool by nodeExecuteTool()")
+            appendLine("    val nodeSendToolResult by nodeLLMSendToolResult()")
+            appendLine()
+            appendLine("    edge(nodeStart forwardTo nodeSendInput)")
+            appendLine("    edge(nodeSendInput forwardTo nodeFinish onAssistantMessage { true })")
+            appendLine("    edge(nodeSendInput forwardTo nodeExecuteTool onToolCall { true })")
+            appendLine("    edge(nodeExecuteTool forwardTo nodeSendToolResult)")
+            appendLine("    edge(nodeSendToolResult forwardTo nodeFinish onAssistantMessage { true })")
+            appendLine("    edge(nodeSendToolResult forwardTo nodeExecuteTool onToolCall { true })")
+        } else {
+            appendLine()
+            appendLine("    edge(nodeStart forwardTo nodeSendInput)")
+            appendLine("    edge(nodeSendInput forwardTo nodeFinish onAssistantMessage { true })")
+        }
+        append("}")
     }
 
     private fun renderMainFunction(spec: ProjectSpec): String = buildString {
@@ -82,51 +127,14 @@ class GraphAgentTemplate : ProjectTemplate {
 
         appendLine("fun main() = runBlocking {")
 
-        if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            appendLine("    val apiKey: String = System.getenv(\"$envVar\")")
-            appendLine("        ?: error(\"Environment variable $envVar is not set.\")")
-        } else {
-            appendLine("    val apiKey: String? = null")
-            appendLine("    // Ollama does not require an API key.")
-        }
-        appendLine()
-
         if (spec.tooling.enabled) {
             if (provider.requiresApiKey) {
-                appendLine("    val toolRegistry = createToolRegistry(requireNotNull(apiKey))")
+                appendLine("    val toolRegistry = createToolRegistry(apiKey)")
             } else {
                 appendLine("    val toolRegistry = createToolRegistry()")
             }
             appendLine()
         }
-
-        provider.executorSetupLines.forEach { setupLine ->
-            appendLine("    $setupLine")
-        }
-        if (provider.executorSetupLines.isNotEmpty()) {
-            appendLine()
-        }
-
-        appendLine("    val agentStrategy = strategy<String, String>(\"${spec.projectName} strategy\") {")
-        appendLine("        val nodeSendInput by nodeLLMRequest()")
-        if (spec.tooling.enabled) {
-            appendLine("        val nodeExecuteTool by nodeExecuteTool()")
-            appendLine("        val nodeSendToolResult by nodeLLMSendToolResult()")
-            appendLine()
-            appendLine("        edge(nodeStart forwardTo nodeSendInput)")
-            appendLine("        edge(nodeSendInput forwardTo nodeFinish onAssistantMessage { true })")
-            appendLine("        edge(nodeSendInput forwardTo nodeExecuteTool onToolCall { true })")
-            appendLine("        edge(nodeExecuteTool forwardTo nodeSendToolResult)")
-            appendLine("        edge(nodeSendToolResult forwardTo nodeFinish onAssistantMessage { true })")
-            appendLine("        edge(nodeSendToolResult forwardTo nodeExecuteTool onToolCall { true })")
-        } else {
-            appendLine()
-            appendLine("        edge(nodeStart forwardTo nodeSendInput)")
-            appendLine("        edge(nodeSendInput forwardTo nodeFinish onAssistantMessage { true })")
-        }
-        appendLine("    }")
-        appendLine()
 
         appendLine("    val agent = AIAgent(")
         appendLine("        promptExecutor = ${provider.executorExpression},")
