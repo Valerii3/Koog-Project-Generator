@@ -10,13 +10,14 @@ interface AgentSectionProps {
 
 export function AgentSection({ agents, selected, onSelect }: AgentSectionProps) {
   return (
-    <div className={styles.grid}>
+    <div className={styles.list}>
       {agents.map(agent => (
         <OptionCard
           key={agent.id}
           label={agent.label}
           description={agent.description}
           selected={selected === agent.id}
+          layout="list"
           onClick={() => onSelect(agent.id)}
         />
       ))}

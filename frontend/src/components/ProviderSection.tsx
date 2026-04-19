@@ -10,13 +10,14 @@ interface ProviderSectionProps {
 
 export function ProviderSection({ providers, selected, onSelect }: ProviderSectionProps) {
   return (
-    <div className={styles.grid}>
+    <div className={styles.list}>
       {providers.map(provider => (
         <OptionCard
           key={provider.id}
           label={provider.label}
           description={provider.envVar ? `${provider.description} (${provider.envVar})` : provider.description}
           selected={selected === provider.id}
+          layout="list"
           onClick={() => onSelect(provider.id)}
         />
       ))}
