@@ -112,6 +112,9 @@ class FunctionalAgentTemplate : ProjectTemplate {
                 source.addDeclaration(renderAgentAsToolVals(spec, agentTool))
             }
         }
+        if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) {
+            source.addDeclaration(renderUserToolRegistryFunction(spec))
+        }
 
         source.addDeclaration(renderMainFunction(spec))
 
@@ -161,25 +164,9 @@ class FunctionalAgentTemplate : ProjectTemplate {
     }
 
     private fun renderToolRegistryBlock(spec: ProjectSpec): String = buildString {
-        val builtInPart = if (spec.tooling.hasBuiltInTools) "createBuiltInToolRegistry()" else null
-
-        val dslLines = mutableListOf<String>()
-        if (spec.tooling.hasAnnotationTools) {
-            dslLines += "        tools(${spec.tooling.annotationToolSetClassName}().asTools())"
-        }
-        if (spec.tooling.hasAgentAsTools) {
-            spec.tooling.agentAsTools.forEach { agentTool ->
-                dslLines += "        tool(${toAgentToolValName(agentTool.agentName)})"
-            }
-        }
-
-        val dslPart = if (dslLines.isNotEmpty()) buildString {
-            appendLine("ToolRegistry {")
-            dslLines.forEach { appendLine(it) }
-            append("    }")
-        } else null
-
-        val parts = listOfNotNull(builtInPart, dslPart)
+        val parts = mutableListOf<String>()
+        if (spec.tooling.hasBuiltInTools) parts += "createBuiltInToolRegistry()"
+        if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) parts += "createUserToolRegistry()"
 
         if (parts.isEmpty()) {
             append("    val toolRegistry = ToolRegistry { }")
@@ -187,6 +174,19 @@ class FunctionalAgentTemplate : ProjectTemplate {
             append("    val toolRegistry = ${parts.joinToString(" + ")}")
         }
         appendLine()
+    }
+
+    private fun renderUserToolRegistryFunction(spec: ProjectSpec): String = buildString {
+        appendLine("fun createUserToolRegistry(): ToolRegistry = ToolRegistry {")
+        if (spec.tooling.hasAnnotationTools) {
+            appendLine("    tools(${spec.tooling.annotationToolSetClassName}().asTools())")
+        }
+        if (spec.tooling.hasAgentAsTools) {
+            spec.tooling.agentAsTools.forEach { agentTool ->
+                appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
+            }
+        }
+        append("}")
     }
 
     private fun renderBuiltInToolRegistryFunction(): String = """
@@ -262,7 +262,9 @@ class FunctionalAgentTemplate : ProjectTemplate {
         val serviceVar = toAgentServiceValName(tool.agentName)
         val toolVar = toAgentToolValName(tool.agentName)
         val systemPrompt = tool.systemPrompt.ifBlank { "You are a specialized agent." }
-        val agentNameLiteral = tool.agentName.ifBlank { "exampleAgent" }
+        val agentNameLiteral = tool.agentName.ifBlank { "userAgent" }
+        val agentDescription = tool.agentDescription.ifBlank { "TODO: describe what this agent does" }
+        val inputDescription = tool.inputDescription.ifBlank { "TODO: describe the expected input" }
 
         appendLine("val $serviceVar = AIAgentService(")
         appendLine("    promptExecutor = ${provider.executorExpression},")
@@ -272,8 +274,8 @@ class FunctionalAgentTemplate : ProjectTemplate {
         appendLine()
         appendLine("val $toolVar = $serviceVar.createAgentTool(")
         appendLine("    agentName = \"${escapeKotlinString(agentNameLiteral)}\",")
-        appendLine("    agentDescription = \"${escapeKotlinString(tool.agentDescription)}\",")
-        appendLine("    inputDescription = \"${escapeKotlinString(tool.inputDescription)}\",")
+        appendLine("    agentDescription = \"${escapeKotlinString(agentDescription)}\",")
+        appendLine("    inputDescription = \"${escapeKotlinString(inputDescription)}\",")
         appendLine("    inputType = typeToken<String>(),")
         append(")")
     }
@@ -350,13 +352,13 @@ class FunctionalAgentTemplate : ProjectTemplate {
     }
 
     private fun toAgentServiceValName(agentName: String): String {
-        val camel = toCamelCase(agentName.ifBlank { "exampleAgent" })
+        val camel = toCamelCase(agentName.ifBlank { "user" })
         val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
         return "${base}Service"
     }
 
     private fun toAgentToolValName(agentName: String): String {
-        val camel = toCamelCase(agentName.ifBlank { "exampleAgent" })
+        val camel = toCamelCase(agentName.ifBlank { "user" })
         val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
         return "${base}Tool"
     }
