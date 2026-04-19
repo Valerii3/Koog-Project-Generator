@@ -13,7 +13,6 @@ class PlannerAgentTemplate : ProjectTemplate {
             GeneratedFile("$base/settings.gradle.kts", renderSettingsGradle(spec)),
             GeneratedFile("$base/build.gradle.kts", renderBuildGradle(spec)),
             GeneratedFile("$base/gradle.properties", "kotlin.code.style=official\n"),
-            GeneratedFile("$base/.env.example", renderEnvExample(spec)),
             GeneratedFile("$base/.gitignore", renderGitIgnore()),
             GeneratedFile("$base/README.md", renderReadme(spec)),
             GeneratedFile("$base/src/main/kotlin/${spec.packagePath}/Main.kt", renderMainKt(spec))
@@ -136,22 +135,6 @@ class PlannerAgentTemplate : ProjectTemplate {
         append("}")
     }
 
-    private fun renderEnvExample(spec: ProjectSpec): String {
-        val provider = spec.llmProvider
-        return if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            """
-                # Copy to .env and set your key for ${provider.displayName}
-                $envVar=your_api_key_here
-            """.trimIndent() + "\n"
-        } else {
-            """
-                # Ollama runs locally and does not require an API key.
-                # Ensure Ollama is running and the selected model is available.
-            """.trimIndent() + "\n"
-        }
-    }
-
     private fun renderReadme(spec: ProjectSpec): String = buildString {
         val plannerType = requireNotNull(spec.plannerType)
         appendLine("# ${spec.projectName}")
@@ -169,19 +152,18 @@ class PlannerAgentTemplate : ProjectTemplate {
         appendLine()
         appendLine("## Setup")
         appendLine()
-        appendLine("1. Copy `.env.example` to `.env` (optional, for your own local workflow).")
         if (spec.llmProvider.requiresApiKey) {
             val envVar = requireNotNull(spec.llmProvider.envVarName)
-            appendLine("2. Export your API key:")
+            appendLine("1. Export your API key:")
             appendLine()
             appendLine("   ```bash")
             appendLine("   export $envVar=...")
             appendLine("   ```")
         } else {
-            appendLine("2. Start Ollama locally and make sure `llama3.2` is available.")
+            appendLine("1. Start Ollama locally and make sure `llama3.2` is available.")
         }
         appendLine()
-        appendLine("3. Run the app:")
+        appendLine("2. Run the app:")
         appendLine()
         appendLine("   ```bash")
         appendLine("   ./gradlew run")

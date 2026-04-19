@@ -11,21 +11,14 @@ class BasicAgentTemplate : ProjectTemplate {
 
     override fun render(spec: ProjectSpec): List<GeneratedFile> {
         val base = spec.projectName
-        val provider = spec.llmProvider
-
-        val files = mutableListOf(
+        return listOf(
             GeneratedFile("$base/settings.gradle.kts", renderSettingsGradle(spec)),
             GeneratedFile("$base/build.gradle.kts", renderBuildGradle(spec)),
             GeneratedFile("$base/gradle.properties", "kotlin.code.style=official\n"),
-            GeneratedFile("$base/.env.example", renderEnvExample(spec)),
             GeneratedFile("$base/.gitignore", renderGitIgnore()),
             GeneratedFile("$base/README.md", renderReadme(spec)),
             GeneratedFile("$base/src/main/kotlin/${spec.packagePath}/Main.kt", renderMainKt(spec))
         )
-
-        files += renderToolFiles(spec)
-
-        return files
     }
 
     private fun renderSettingsGradle(spec: ProjectSpec): String =
@@ -96,64 +89,94 @@ class BasicAgentTemplate : ProjectTemplate {
         }
         source.addImports(provider.importLines)
         source.addImport("import kotlinx.coroutines.runBlocking")
+
         if (spec.tooling.enabled) {
             source.addImport("import ai.koog.agents.core.tools.ToolRegistry")
-            source.addImport("import ${spec.packageName}.tools.createToolRegistry")
+            if (spec.tooling.hasBuiltInTools) {
+                source.addImport("import ai.koog.agents.ext.tool.AskUser")
+                source.addImport("import ai.koog.agents.ext.tool.ExitTool")
+                source.addImport("import ai.koog.agents.ext.tool.SayToUser")
+                source.addImport("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.ReadFileTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.WriteFileTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
+            }
+            if (spec.tooling.hasAnnotationTools) {
+                source.addImport("import ai.koog.agents.core.tools.annotations.LLMDescription")
+                source.addImport("import ai.koog.agents.core.tools.annotations.Tool")
+                source.addImport("import ai.koog.agents.core.tools.reflect.ToolSet")
+                source.addImport("import ai.koog.agents.core.tools.reflect.asTools")
+            }
+            if (spec.tooling.hasAgentAsTools) {
+                source.addImport("import ai.koog.agents.core.agent.AIAgentService")
+                source.addImport("import ai.koog.agents.core.agent.createAgentTool")
+                source.addImport("import ai.koog.agents.core.tools.reflect.typeToken")
+            }
         }
 
-        source.addDeclaration(renderAgentOptionsDataClass())
+        if (provider.requiresApiKey) {
+            source.addDeclaration(renderTopLevelApiKey(provider))
+        }
+        provider.executorSetupLines.forEach { setupLine ->
+            source.addDeclaration("private $setupLine")
+        }
+
+        if (spec.tooling.hasBuiltInTools) {
+            source.addDeclaration(renderBuiltInToolRegistryFunction())
+        }
+        if (spec.tooling.hasAnnotationTools) {
+            source.addDeclaration(renderSampleToolSetClass(spec.tooling))
+        }
+        if (spec.tooling.hasAgentAsTools) {
+            spec.tooling.agentAsTools.forEach { agentTool ->
+                source.addDeclaration(renderAgentAsToolVals(spec, agentTool))
+            }
+        }
+
         source.addDeclaration(renderMainFunction(spec))
-        source.addDeclaration(renderCreateAgentFunction(spec))
 
         return source.render()
     }
 
-    private fun renderAgentOptionsDataClass(): String = """
-        private data class AgentOptions(
-            val systemPrompt: String? = null,
-            val temperature: Double? = null,
-            val maxIterations: Int? = null
-        )
-    """.trimIndent()
+    private fun renderTopLevelApiKey(provider: com.example.kooggen.model.LlmProvider): String {
+        val envVar = requireNotNull(provider.envVarName)
+        return """
+            private val apiKey: String = System.getenv("$envVar")
+                ?: error("Environment variable $envVar is not set.")
+        """.trimIndent()
+    }
 
     private fun renderMainFunction(spec: ProjectSpec): String = buildString {
         val provider = spec.llmProvider
         appendLine("fun main() = runBlocking {")
-        if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            appendLine("    val apiKey: String? = System.getenv(\"$envVar\")")
-            appendLine("        ?: error(\"Environment variable $envVar is not set.\")")
-            appendLine()
-        } else {
-            appendLine("    val apiKey: String? = null")
-            appendLine("    // Ollama does not require an API key.")
-            appendLine()
-        }
-        appendLine()
-        appendLine("    val options = AgentOptions(")
-        appendLine("        systemPrompt = null,")
-        appendLine("        temperature = null,")
-        appendLine("        maxIterations = null")
-        appendLine("    )")
+
         if (spec.tooling.enabled) {
+            append(renderToolRegistryBlock(spec))
             appendLine()
-            appendLine("    val toolRegistry = createToolRegistry(apiKey)")
         }
+
+        val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory ||
+            spec.features.hasAgentPersistence || spec.features.hasTracing
+        if (hasFeatureInit) {
+            append(renderFeatureInitBlock(spec))
+            appendLine()
+        }
+
+        appendLine("    val agent = AIAgent<String, String>(")
+        appendLine("        promptExecutor = ${provider.executorExpression},")
+        appendLine("        llmModel = ${provider.modelExpression},")
+        appendLine("        systemPrompt = \"You are a helpful assistant\",")
+        appendLine("        temperature = 0.7,")
+        appendLine("        maxIterations = 10,")
+        if (spec.tooling.enabled) {
+            appendLine("        toolRegistry = toolRegistry,")
+        }
+        if (hasFeatureInit) {
+            appendLine("        init = installFeatures,")
+        }
+        appendLine("    )")
         appendLine()
-        val createAgentCall = if (spec.tooling.enabled) {
-            if (provider.requiresApiKey) {
-                "createAgent(requireNotNull(apiKey), options, toolRegistry)"
-            } else {
-                "createAgent(options, toolRegistry)"
-            }
-        } else {
-            if (provider.requiresApiKey) {
-                "createAgent(requireNotNull(apiKey), options)"
-            } else {
-                "createAgent(options)"
-            }
-        }
-        appendLine("    val agent = $createAgentCall")
+
         if (spec.features.hasChatMemory) {
             appendLine("    val sessionId = \"${escapeKotlinString(spec.features.chatMemory.sessionId)}\"")
             appendLine("    val result = agent.run(\"Hello! Introduce yourself in one sentence.\", sessionId)")
@@ -164,11 +187,15 @@ class BasicAgentTemplate : ProjectTemplate {
         append("}")
     }
 
-    private fun renderCreateAgentFunction(spec: ProjectSpec): String = buildString {
-        val provider = spec.llmProvider
-        val signatureParts = mutableListOf<String>()
-        if (provider.requiresApiKey) {
-            signatureParts += "apiKey: String"
+    private fun renderToolRegistryBlock(spec: ProjectSpec): String = buildString {
+        val parts = mutableListOf<String>()
+        if (spec.tooling.hasBuiltInTools) {
+            parts += "createBuiltInToolRegistry()"
+        }
+
+        val dslLines = mutableListOf<String>()
+        if (spec.tooling.hasAnnotationTools) {
+            dslLines += "tools(${spec.tooling.annotationToolSetClassName}().asTools())"
         }
         signatureParts += "options: AgentOptions"
         if (spec.tooling.enabled) {
@@ -484,9 +511,9 @@ class BasicAgentTemplate : ProjectTemplate {
         val tools = if (tooling.annotationTools.isEmpty()) {
             listOf(
                 AnnotationToolSpec(
-                    functionName = "myTool",
-                    customName = null,
-                    description = "TODO: describe what this tool does",
+                    functionName = "sampleTool",
+                    customName = "sample_tool",
+                    description = "Sample tool description",
                     parameters = emptyList()
                 )
             )
@@ -495,9 +522,7 @@ class BasicAgentTemplate : ProjectTemplate {
         }
 
         tools.forEachIndexed { index, tool ->
-            if (index > 0) {
-                appendLine()
-            }
+            if (index > 0) appendLine()
             append(renderAnnotationToolFunction(tool))
         }
 
@@ -510,40 +535,52 @@ class BasicAgentTemplate : ProjectTemplate {
         if (tool.customName.isNullOrBlank()) {
             appendLine("    @Tool")
         } else {
-            appendLine("    @Tool(customName = \"${escapeKotlinString(tool.customName)}\")")
+            appendLine("    @Tool(\"${escapeKotlinString(tool.customName)}\")")
         }
         appendLine("    @LLMDescription(\"$escapedDescription\")")
 
-        if (tool.parameters.isEmpty()) {
-            appendLine("    fun ${tool.functionName}(): String {")
+        val params = if (tool.parameters.isEmpty()) {
+            listOf(
+                com.example.kooggen.model.ToolParameterSpec(
+                    name = "input",
+                    type = com.example.kooggen.model.ToolParameterType.STRING,
+                    description = "Sample tool input"
+                )
+            )
         } else {
-            appendLine("    fun ${tool.functionName}(")
-            tool.parameters.forEachIndexed { index, parameter ->
-                val suffix = if (index == tool.parameters.lastIndex) "" else ","
-                appendLine("        @LLMDescription(\"${escapeKotlinString(parameter.description)}\")")
-                appendLine("        ${parameter.name}: ${parameter.type.kotlinType}$suffix")
-            }
-            appendLine("    ): String {")
+            tool.parameters
         }
 
-        appendLine("        TODO(\"Implement tool '${tool.functionName}'\")")
+        appendLine("    fun ${tool.functionName}(")
+        params.forEachIndexed { index, parameter ->
+            val suffix = if (index == params.lastIndex) "" else ","
+            appendLine("        @LLMDescription(\"${escapeKotlinString(parameter.description)}\")")
+            appendLine("        ${parameter.name}: ${parameter.type.kotlinType}$suffix")
+        }
+        appendLine("    ): String {")
+        appendLine("        TODO(\"Not yet implemented\")")
         append("    }")
     }
 
-    private fun renderEnvExample(spec: ProjectSpec): String {
+    private fun renderAgentAsToolVals(spec: ProjectSpec, tool: AgentAsToolSpec): String = buildString {
         val provider = spec.llmProvider
-        return if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            """
-                # Copy to .env and set your key for ${provider.displayName}
-                $envVar=your_api_key_here
-            """.trimIndent() + "\n"
-        } else {
-            """
-                # Ollama runs locally and does not require an API key.
-                # Ensure Ollama is running and the selected model is available.
-            """.trimIndent() + "\n"
-        }
+        val serviceVar = toAgentServiceValName(tool.agentName)
+        val toolVar = toAgentToolValName(tool.agentName)
+        val systemPrompt = tool.systemPrompt.ifBlank { "You are a specialized agent." }
+        val agentNameLiteral = tool.agentName.ifBlank { "exampleAgent" }
+
+        appendLine("val $serviceVar = AIAgentService(")
+        appendLine("    promptExecutor = ${provider.executorExpression},")
+        appendLine("    llmModel = ${provider.modelExpression},")
+        appendLine("    systemPrompt = \"${escapeKotlinString(systemPrompt)}\",")
+        appendLine(")")
+        appendLine()
+        appendLine("val $toolVar = $serviceVar.createAgentTool(")
+        appendLine("    agentName = \"${escapeKotlinString(agentNameLiteral)}\",")
+        appendLine("    agentDescription = \"${escapeKotlinString(tool.agentDescription)}\",")
+        appendLine("    inputDescription = \"${escapeKotlinString(tool.inputDescription)}\",")
+        appendLine("    inputType = typeToken<String>(),")
+        append(")")
     }
 
     private fun renderReadme(spec: ProjectSpec): String = buildString {
@@ -558,19 +595,18 @@ class BasicAgentTemplate : ProjectTemplate {
         appendLine()
         appendLine("## Setup")
         appendLine()
-        appendLine("1. Copy `.env.example` to `.env` (optional, for your own local workflow).")
         if (spec.llmProvider.requiresApiKey) {
             val envVar = requireNotNull(spec.llmProvider.envVarName)
-            appendLine("2. Export your API key:")
+            appendLine("1. Export your API key:")
             appendLine()
             appendLine("   ```bash")
             appendLine("   export $envVar=...")
             appendLine("   ```")
         } else {
-            appendLine("2. Start Ollama locally and make sure `llama3.2` is available.")
+            appendLine("1. Start Ollama locally and make sure `llama3.2` is available.")
         }
         appendLine()
-        appendLine("3. Run the app:")
+        appendLine("2. Run the app:")
         appendLine()
         appendLine("   ```bash")
         appendLine("   ./gradlew run")
@@ -578,43 +614,31 @@ class BasicAgentTemplate : ProjectTemplate {
         appendLine()
         appendLine("## What this project includes")
         appendLine()
-        appendLine("- Constructor-based `AIAgent` setup (no `AIAgentConfig`)")
+        appendLine("- `AIAgent` constructor with `systemPrompt`, `temperature = 0.7`, `maxIterations = 10`")
         appendLine("- LLM provider: ${spec.llmProvider.displayName}")
-        appendLine("- Prompt executor + model configuration")
-        appendLine("- Optional system prompt")
-        appendLine("- Optional temperature")
-        appendLine("- Optional max iterations")
         if (spec.features.hasEventHandler) {
             appendLine("- Event handler callbacks via `handleEvents`")
         }
         if (spec.features.hasChatMemory) {
             appendLine("- In-memory chat memory via `install(ChatMemory)` with `windowSize(${spec.features.chatMemory.windowSize})`")
             appendLine("- Session-aware runs via `agent.run(message, \"${escapeKotlinString(spec.features.chatMemory.sessionId)}\")`")
-            appendLine("- Adds dependency `ai.koog:agents-features-memory:0.7.1`")
         }
         if (spec.features.hasAgentPersistence) {
-            appendLine("- Agent persistence via `install(Persistence)`")
-            appendLine("- Uses `InMemoryPersistenceStorageProvider()`")
-            appendLine("- Sets `enableAutomaticPersistence = false`")
-            appendLine("- Adds dependency `ai.koog.agents:agents-features-snapshot:0.7.1`")
+            appendLine("- Agent persistence via `install(Persistence)` with `InMemoryPersistenceStorageProvider()`")
         }
         if (spec.features.hasTracing) {
-            appendLine("- Tracing via `install(Tracing)`")
-            appendLine("- Adds `TraceFeatureMessageLogWriter(logger)`")
-            appendLine("- Adds dependencies `ai.koog:agents-features-trace:0.7.1` and Kotlin logging")
+            appendLine("- Tracing via `install(Tracing)` with `TraceFeatureMessageLogWriter(logger)`")
         }
-
         if (spec.tooling.enabled) {
-            appendLine("- Tool registry wiring in `src/main/kotlin/${spec.packagePath}/tools/ToolRegistry.kt`")
+            appendLine("- All tool wiring is inlined in `Main.kt`")
             if (spec.tooling.hasBuiltInTools) {
-                appendLine("- Built-in tools enabled in `BuiltInTools.kt` (chat + file tools)")
+                appendLine("- Built-in tools via `createBuiltInToolRegistry()` (chat + file tools)")
             }
             if (spec.tooling.hasAnnotationTools) {
-                appendLine("- Annotation-based tool stubs with TODO implementations in `AnnotationTools.kt`")
+                appendLine("- Annotation-based tools via `${spec.tooling.annotationToolSetClassName}` with TODO stubs")
             }
             if (spec.tooling.hasAgentAsTools) {
-                appendLine("- Agent-as-tool registry in `AgentAsToolRegistry.kt`")
-                appendLine("- One file per nested agent tool under `tools/agents/`, each with nested tool-registry and feature extension hooks")
+                appendLine("- Agent-as-tool vals declared at top level in `Main.kt`")
             }
         }
     }
@@ -639,8 +663,20 @@ class BasicAgentTemplate : ProjectTemplate {
         }
         .ifBlank { "Agent" }
 
-    private fun toGeneratedAgentTypeName(value: String): String {
+    private fun toCamelCase(value: String): String {
         val pascal = toPascalCase(value)
-        return if (pascal.endsWith("Agent")) pascal else "${pascal}Agent"
+        return pascal.replaceFirstChar { ch -> ch.lowercase() }
+    }
+
+    private fun toAgentServiceValName(agentName: String): String {
+        val camel = toCamelCase(agentName.ifBlank { "exampleAgent" })
+        val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
+        return "${base}Service"
+    }
+
+    private fun toAgentToolValName(agentName: String): String {
+        val camel = toCamelCase(agentName.ifBlank { "exampleAgent" })
+        val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
+        return "${base}Tool"
     }
 }

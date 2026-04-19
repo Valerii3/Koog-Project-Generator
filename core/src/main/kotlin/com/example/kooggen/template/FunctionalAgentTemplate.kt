@@ -3,28 +3,25 @@ package com.example.kooggen.template
 import com.example.kooggen.model.AgentTemplateType
 import com.example.kooggen.model.AgentAsToolSpec
 import com.example.kooggen.model.AnnotationToolSpec
+import com.example.kooggen.model.LlmProvider
 import com.example.kooggen.model.ProjectSpec
 import com.example.kooggen.model.ProjectToolingSpec
+import com.example.kooggen.model.ToolParameterSpec
+import com.example.kooggen.model.ToolParameterType
 
 class FunctionalAgentTemplate : ProjectTemplate {
     override val type: AgentTemplateType = AgentTemplateType.FUNCTIONAL
 
     override fun render(spec: ProjectSpec): List<GeneratedFile> {
         val base = spec.projectName
-
-        val files = mutableListOf(
+        return listOf(
             GeneratedFile("$base/settings.gradle.kts", renderSettingsGradle(spec)),
             GeneratedFile("$base/build.gradle.kts", renderBuildGradle(spec)),
             GeneratedFile("$base/gradle.properties", "kotlin.code.style=official\n"),
-            GeneratedFile("$base/.env.example", renderEnvExample(spec)),
             GeneratedFile("$base/.gitignore", renderGitIgnore()),
             GeneratedFile("$base/README.md", renderReadme(spec)),
             GeneratedFile("$base/src/main/kotlin/${spec.packagePath}/Main.kt", renderMainKt(spec))
         )
-
-        files += renderToolFiles(spec)
-
-        return files
     }
 
     private fun renderSettingsGradle(spec: ProjectSpec): String =
@@ -64,12 +61,56 @@ class FunctionalAgentTemplate : ProjectTemplate {
         val source = KotlinSourceFile(spec.packageName)
 
         source.addImport("import ai.koog.agents.core.agent.AIAgent")
-        source.addImport("import ai.koog.agents.local.strategy.functionalStrategy")
+        source.addImport("import ai.koog.agents.core.dsl.builder.forwardTo")
+        source.addImport("import ai.koog.agents.core.dsl.builder.strategy")
+        source.addImport("import ai.koog.agents.core.dsl.extension.nodeLLMRequest")
+        source.addImport("import ai.koog.agents.core.dsl.extension.onAssistantMessage")
         source.addImports(provider.importLines)
         source.addImport("import kotlinx.coroutines.runBlocking")
+
         if (spec.tooling.enabled) {
             source.addImport("import ai.koog.agents.core.tools.ToolRegistry")
-            source.addImport("import ${spec.packageName}.tools.createToolRegistry")
+            if (spec.tooling.hasBuiltInTools) {
+                source.addImport("import ai.koog.agents.ext.tool.AskUser")
+                source.addImport("import ai.koog.agents.ext.tool.ExitTool")
+                source.addImport("import ai.koog.agents.ext.tool.SayToUser")
+                source.addImport("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.ReadFileTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.WriteFileTool")
+                source.addImport("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
+            }
+            if (spec.tooling.hasAnnotationTools) {
+                source.addImport("import ai.koog.agents.core.tools.annotations.LLMDescription")
+                source.addImport("import ai.koog.agents.core.tools.annotations.Tool")
+                source.addImport("import ai.koog.agents.core.tools.reflect.ToolSet")
+                source.addImport("import ai.koog.agents.core.tools.reflect.asTools")
+            }
+            if (spec.tooling.hasAgentAsTools) {
+                source.addImport("import ai.koog.agents.core.agent.AIAgentService")
+                source.addImport("import ai.koog.agents.core.agent.createAgentTool")
+                source.addImport("import ai.koog.agents.core.tools.reflect.typeToken")
+            }
+        }
+
+        if (provider.requiresApiKey) {
+            source.addDeclaration(renderTopLevelApiKey(provider))
+        }
+        provider.executorSetupLines.forEach { setupLine ->
+            source.addDeclaration("private $setupLine")
+        }
+
+        source.addDeclaration(renderTopLevelAgentStrategy())
+
+        if (spec.tooling.hasBuiltInTools) {
+            source.addDeclaration(renderBuiltInToolRegistryFunction())
+        }
+        if (spec.tooling.hasAnnotationTools) {
+            source.addDeclaration(renderSampleToolSetClass(spec.tooling))
+        }
+        if (spec.tooling.hasAgentAsTools) {
+            spec.tooling.agentAsTools.forEach { agentTool ->
+                source.addDeclaration(renderAgentAsToolVals(spec, agentTool))
+            }
         }
 
         source.addDeclaration(renderMainFunction(spec))
@@ -77,51 +118,37 @@ class FunctionalAgentTemplate : ProjectTemplate {
         return source.render()
     }
 
+    private fun renderTopLevelApiKey(provider: LlmProvider): String {
+        val envVar = requireNotNull(provider.envVarName)
+        return """
+            private val apiKey: String = System.getenv("$envVar")
+                ?: error("Environment variable $envVar is not set.")
+        """.trimIndent()
+    }
+
+    private fun renderTopLevelAgentStrategy(): String = """
+        val agentStrategy = strategy<String, String>("hello strategy") {
+            val nodeSendInput by nodeLLMRequest()
+
+            edge(nodeStart forwardTo nodeSendInput)
+            edge(nodeSendInput forwardTo nodeFinish onAssistantMessage { true })
+        }
+    """.trimIndent()
+
     private fun renderMainFunction(spec: ProjectSpec): String = buildString {
         val provider = spec.llmProvider
 
         appendLine("fun main() = runBlocking {")
 
-        if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            appendLine("    val apiKey: String = System.getenv(\"$envVar\")")
-            appendLine("        ?: error(\"Environment variable $envVar is not set.\")")
-        } else {
-            appendLine("    val apiKey: String? = null")
-            appendLine("    // Ollama does not require an API key.")
-        }
-        appendLine()
-
         if (spec.tooling.enabled) {
-            if (provider.requiresApiKey) {
-                appendLine("    val toolRegistry = createToolRegistry(requireNotNull(apiKey))")
-            } else {
-                appendLine("    val toolRegistry = createToolRegistry()")
-            }
+            append(renderToolRegistryBlock(spec))
             appendLine()
         }
-
-        provider.executorSetupLines.forEach { setupLine ->
-            appendLine("    $setupLine")
-        }
-        if (provider.executorSetupLines.isNotEmpty()) {
-            appendLine()
-        }
-
-        appendLine("    val strategy = functionalStrategy<String, String> { input ->")
-        if (spec.tooling.enabled) {
-            appendLine("        // requestLLM executes a single LLM request.")
-            appendLine("        // If your tools require multi-turn execution, implement a loop using executeTool.")
-        }
-        appendLine("        val response = requestLLM(input)")
-        appendLine("        response.asAssistantMessage().content")
-        appendLine("    }")
-        appendLine()
 
         appendLine("    val agent = AIAgent(")
         appendLine("        promptExecutor = ${provider.executorExpression},")
         appendLine("        llmModel = ${provider.modelExpression},")
-        appendLine("        strategy = strategy,")
+        appendLine("        strategy = agentStrategy,")
         if (spec.tooling.enabled) {
             appendLine("        toolRegistry = toolRegistry,")
         }
@@ -133,22 +160,17 @@ class FunctionalAgentTemplate : ProjectTemplate {
         append("}")
     }
 
-    private fun renderToolFiles(spec: ProjectSpec): List<GeneratedFile> {
-        if (!spec.tooling.enabled) {
-            return emptyList()
-        }
-        val base = "${spec.projectName}/src/main/kotlin/${spec.packagePath}/tools"
-        val out = mutableListOf(
-            GeneratedFile("$base/ToolRegistry.kt", renderToolRegistryKt(spec))
-        )
+    private fun renderToolRegistryBlock(spec: ProjectSpec): String = buildString {
+        val parts = mutableListOf<String>()
         if (spec.tooling.hasBuiltInTools) {
-            out += GeneratedFile("$base/BuiltInTools.kt", renderBuiltInToolsKt(spec))
+            parts += "createBuiltInToolRegistry()"
         }
+
+        val dslLines = mutableListOf<String>()
         if (spec.tooling.hasAnnotationTools) {
-            out += GeneratedFile("$base/AnnotationTools.kt", renderAnnotationToolsKt(spec))
+            dslLines += "tools(${spec.tooling.annotationToolSetClassName}().asTools())"
         }
         if (spec.tooling.hasAgentAsTools) {
-            out += GeneratedFile("$base/AgentAsToolRegistry.kt", renderAgentAsToolRegistryKt(spec))
             spec.tooling.agentAsTools.forEach { agentTool ->
                 val fileName = "${toGeneratedAgentTypeName(agentTool.agentName)}Tool.kt"
                 out += GeneratedFile(
@@ -299,37 +321,30 @@ class FunctionalAgentTemplate : ProjectTemplate {
             val envVar = requireNotNull(provider.envVarName)
             appendLine("    val apiKey = requireNotNull(rawApiKey) { \"Environment variable $envVar is required.\" }")
         } else {
-            appendLine("    // Provider ${provider.displayName} does not require an API key.")
+            appendLine("    val toolRegistry = ${parts.joinToString(" + ")}")
         }
-        provider.executorSetupLines.forEach { setupLine ->
-            appendLine("    $setupLine")
-        }
-        appendLine()
-        appendLine("    val service = AIAgentService(")
-        appendLine("        promptExecutor = ${provider.executorExpression},")
-        appendLine("        llmModel = ${provider.modelExpression},")
-        appendLine("        systemPrompt = $systemPromptConst,")
-        appendLine("        toolRegistry = $nestedRegistryFunction()")
-        appendLine("    )")
-        appendLine()
-        appendLine("    service.createAgentTool(")
-        appendLine("        agentName = \"${escapeKotlinString(tool.agentName)}\",")
-        appendLine("        agentDescription = \"${escapeKotlinString(tool.agentDescription)}\",")
-        appendLine("        inputDescription = \"${escapeKotlinString(tool.inputDescription)}\"")
-        appendLine("    )")
-        appendLine("}")
     }
 
-    private fun renderAnnotationToolSetClass(tooling: ProjectToolingSpec): String = buildString {
-        appendLine("@LLMDescription(\"User-defined annotation-based tools\")")
+    private fun renderBuiltInToolRegistryFunction(): String = """
+        fun createBuiltInToolRegistry(): ToolRegistry = ToolRegistry {
+            tool(SayToUser)
+            tool(AskUser)
+            tool(ExitTool)
+            tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
+            tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
+            tool(WriteFileTool(JVMFileSystemProvider.ReadWrite))
+        }
+    """.trimIndent()
+
+    private fun renderSampleToolSetClass(tooling: ProjectToolingSpec): String = buildString {
         appendLine("class ${tooling.annotationToolSetClassName} : ToolSet {")
 
         val tools = if (tooling.annotationTools.isEmpty()) {
             listOf(
                 AnnotationToolSpec(
-                    functionName = "myTool",
-                    customName = null,
-                    description = "TODO: describe what this tool does",
+                    functionName = "sampleTool",
+                    customName = "sample_tool",
+                    description = "Sample tool description",
                     parameters = emptyList()
                 )
             )
@@ -351,38 +366,52 @@ class FunctionalAgentTemplate : ProjectTemplate {
         if (tool.customName.isNullOrBlank()) {
             appendLine("    @Tool")
         } else {
-            appendLine("    @Tool(customName = \"${escapeKotlinString(tool.customName)}\")")
+            appendLine("    @Tool(\"${escapeKotlinString(tool.customName)}\")")
         }
         appendLine("    @LLMDescription(\"$escapedDescription\")")
-        if (tool.parameters.isEmpty()) {
-            appendLine("    fun ${tool.functionName}(): String {")
+
+        val params = if (tool.parameters.isEmpty()) {
+            listOf(
+                ToolParameterSpec(
+                    name = "input",
+                    type = ToolParameterType.STRING,
+                    description = "Sample tool input"
+                )
+            )
         } else {
-            appendLine("    fun ${tool.functionName}(")
-            tool.parameters.forEachIndexed { index, parameter ->
-                val suffix = if (index == tool.parameters.lastIndex) "" else ","
-                appendLine("        @LLMDescription(\"${escapeKotlinString(parameter.description)}\")")
-                appendLine("        ${parameter.name}: ${parameter.type.kotlinType}$suffix")
-            }
-            appendLine("    ): String {")
+            tool.parameters
         }
-        appendLine("        TODO(\"Implement tool '${tool.functionName}'\")")
+
+        appendLine("    fun ${tool.functionName}(")
+        params.forEachIndexed { index, parameter ->
+            val suffix = if (index == params.lastIndex) "" else ","
+            appendLine("        @LLMDescription(\"${escapeKotlinString(parameter.description)}\")")
+            appendLine("        ${parameter.name}: ${parameter.type.kotlinType}$suffix")
+        }
+        appendLine("    ): String {")
+        appendLine("        TODO(\"Not yet implemented\")")
         append("    }")
     }
 
-    private fun renderEnvExample(spec: ProjectSpec): String {
+    private fun renderAgentAsToolVals(spec: ProjectSpec, tool: AgentAsToolSpec): String = buildString {
         val provider = spec.llmProvider
-        return if (provider.requiresApiKey) {
-            val envVar = requireNotNull(provider.envVarName)
-            """
-                # Copy to .env and set your key for ${provider.displayName}
-                $envVar=your_api_key_here
-            """.trimIndent() + "\n"
-        } else {
-            """
-                # Ollama runs locally and does not require an API key.
-                # Ensure Ollama is running and the selected model is available.
-            """.trimIndent() + "\n"
-        }
+        val serviceVar = toAgentServiceValName(tool.agentName)
+        val toolVar = toAgentToolValName(tool.agentName)
+        val systemPrompt = tool.systemPrompt.ifBlank { "You are a specialized agent." }
+        val agentNameLiteral = tool.agentName.ifBlank { "exampleAgent" }
+
+        appendLine("val $serviceVar = AIAgentService(")
+        appendLine("    promptExecutor = ${provider.executorExpression},")
+        appendLine("    llmModel = ${provider.modelExpression},")
+        appendLine("    systemPrompt = \"${escapeKotlinString(systemPrompt)}\",")
+        appendLine(")")
+        appendLine()
+        appendLine("val $toolVar = $serviceVar.createAgentTool(")
+        appendLine("    agentName = \"${escapeKotlinString(agentNameLiteral)}\",")
+        appendLine("    agentDescription = \"${escapeKotlinString(tool.agentDescription)}\",")
+        appendLine("    inputDescription = \"${escapeKotlinString(tool.inputDescription)}\",")
+        appendLine("    inputType = typeToken<String>(),")
+        append(")")
     }
 
     private fun renderReadme(spec: ProjectSpec): String = buildString {
@@ -397,19 +426,18 @@ class FunctionalAgentTemplate : ProjectTemplate {
         appendLine()
         appendLine("## Setup")
         appendLine()
-        appendLine("1. Copy `.env.example` to `.env` (optional, for your own local workflow).")
         if (spec.llmProvider.requiresApiKey) {
             val envVar = requireNotNull(spec.llmProvider.envVarName)
-            appendLine("2. Export your API key:")
+            appendLine("1. Export your API key:")
             appendLine()
             appendLine("   ```bash")
             appendLine("   export $envVar=...")
             appendLine("   ```")
         } else {
-            appendLine("2. Start Ollama locally and make sure `llama3.2` is available.")
+            appendLine("1. Start Ollama locally and make sure `llama3.2` is available.")
         }
         appendLine()
-        appendLine("3. Run the app:")
+        appendLine("2. Run the app:")
         appendLine()
         appendLine("   ```bash")
         appendLine("   ./gradlew run")
@@ -417,20 +445,19 @@ class FunctionalAgentTemplate : ProjectTemplate {
         appendLine()
         appendLine("## What this project includes")
         appendLine()
-        appendLine("- `functionalStrategy<String, String>` with a single `requestLLM` call")
-        appendLine("- `AIAgent` wired to the functional strategy")
+        appendLine("- `agentStrategy` declared at top level using the `strategy` DSL")
+        appendLine("- `AIAgent` wired to `agentStrategy`")
         appendLine("- LLM provider: ${spec.llmProvider.displayName}")
         if (spec.tooling.enabled) {
-            appendLine("- Tool registry wiring in `src/main/kotlin/${spec.packagePath}/tools/ToolRegistry.kt`")
+            appendLine("- All tool wiring is inlined in `Main.kt`")
             if (spec.tooling.hasBuiltInTools) {
-                appendLine("- Built-in tools enabled in `BuiltInTools.kt` (chat + file tools)")
+                appendLine("- Built-in tools via `createBuiltInToolRegistry()` (chat + file tools)")
             }
             if (spec.tooling.hasAnnotationTools) {
-                appendLine("- Annotation-based tool stubs with TODO implementations in `AnnotationTools.kt`")
+                appendLine("- Annotation-based tools via `${spec.tooling.annotationToolSetClassName}` with TODO stubs")
             }
             if (spec.tooling.hasAgentAsTools) {
-                appendLine("- Agent-as-tool registry in `AgentAsToolRegistry.kt`")
-                appendLine("- One file per nested agent tool under `tools/agents/`")
+                appendLine("- Agent-as-tool vals declared at top level in `Main.kt`")
             }
         }
     }
@@ -453,8 +480,20 @@ class FunctionalAgentTemplate : ProjectTemplate {
         .joinToString("") { part -> part.replaceFirstChar { ch -> ch.uppercase() } }
         .ifBlank { "Agent" }
 
-    private fun toGeneratedAgentTypeName(value: String): String {
+    private fun toCamelCase(value: String): String {
         val pascal = toPascalCase(value)
-        return if (pascal.endsWith("Agent")) pascal else "${pascal}Agent"
+        return pascal.replaceFirstChar { ch -> ch.lowercase() }
+    }
+
+    private fun toAgentServiceValName(agentName: String): String {
+        val camel = toCamelCase(agentName.ifBlank { "exampleAgent" })
+        val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
+        return "${base}Service"
+    }
+
+    private fun toAgentToolValName(agentName: String): String {
+        val camel = toCamelCase(agentName.ifBlank { "exampleAgent" })
+        val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
+        return "${base}Tool"
     }
 }
