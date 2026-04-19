@@ -61,10 +61,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
         val source = KotlinSourceFile(spec.packageName)
 
         source.addImport("import ai.koog.agents.core.agent.AIAgent")
-        source.addImport("import ai.koog.agents.core.dsl.builder.forwardTo")
-        source.addImport("import ai.koog.agents.core.dsl.builder.strategy")
-        source.addImport("import ai.koog.agents.core.dsl.extension.nodeLLMRequest")
-        source.addImport("import ai.koog.agents.core.dsl.extension.onAssistantMessage")
+        source.addImport("import ai.koog.agents.core.dsl.builder.functionalStrategy")
         source.addImports(provider.importLines)
         source.addImport("import kotlinx.coroutines.runBlocking")
 
@@ -104,22 +101,19 @@ class FunctionalAgentTemplate : ProjectTemplate {
 
         source.addDeclaration(renderTopLevelAgentStrategy())
 
-        if (spec.tooling.hasBuiltInTools) {
-            source.addDeclaration(renderBuiltInToolRegistryFunction())
-        }
         if (spec.tooling.hasAnnotationTools) {
             source.addDeclaration(renderSampleToolSetClass(spec.tooling))
         }
+        if (spec.tooling.hasBuiltInTools) {
+            source.addDeclaration(renderBuiltInToolRegistryFunction())
+        }
         if (spec.tooling.hasAgentAsTools) {
-            spec.tooling.agentAsTools.forEach { agentTool ->
+            effectiveAgentAsTools(spec).forEach { agentTool ->
                 source.addDeclaration(renderAgentAsToolVals(spec, agentTool))
             }
         }
         if (spec.tooling.hasAnnotationTools || spec.tooling.hasAgentAsTools) {
             source.addDeclaration(renderUserToolRegistryFunction(spec))
-        }
-        if (spec.tooling.hasMcpTools) {
-            source.addDeclaration(renderMcpTopLevelVals(spec))
         }
 
         source.addDeclaration(renderMainFunction(spec))
@@ -136,11 +130,9 @@ class FunctionalAgentTemplate : ProjectTemplate {
     }
 
     private fun renderTopLevelAgentStrategy(): String = """
-        val agentStrategy = strategy<String, String>("hello strategy") {
-            val nodeSendInput by nodeLLMRequest()
-
-            edge(nodeStart forwardTo nodeSendInput)
-            edge(nodeSendInput forwardTo nodeFinish onAssistantMessage { true })
+        val strategy = functionalStrategy<String, String> { input ->
+            val response = requestLLM(input)
+            response.asAssistantMessage().content
         }
     """.trimIndent()
 
@@ -149,6 +141,10 @@ class FunctionalAgentTemplate : ProjectTemplate {
 
         appendLine("fun main() = runBlocking {")
 
+        if (spec.tooling.hasMcpTools) {
+            append(renderMcpMainBlock(spec))
+            appendLine()
+        }
         if (spec.tooling.enabled) {
             append(renderToolRegistryBlock(spec))
             appendLine()
@@ -157,7 +153,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
         appendLine("    val agent = AIAgent(")
         appendLine("        promptExecutor = ${provider.executorExpression},")
         appendLine("        llmModel = ${provider.modelExpression},")
-        appendLine("        strategy = agentStrategy,")
+        appendLine("        strategy = strategy,")
         if (spec.tooling.enabled) {
             appendLine("        toolRegistry = toolRegistry,")
         }
@@ -183,7 +179,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
         appendLine()
     }
 
-    private fun renderMcpTopLevelVals(spec: ProjectSpec): String = buildString {
+    private fun renderMcpMainBlock(spec: ProjectSpec): String = buildString {
         val servers = spec.tooling.mcpServers.ifEmpty {
             listOf(com.example.kooggen.model.McpServerSpec("java -jar mcp-server.jar"))
         }
@@ -191,27 +187,34 @@ class FunctionalAgentTemplate : ProjectTemplate {
             val args = servers[0].serverCommand.split(" ")
                 .filter { it.isNotBlank() }
                 .joinToString(", ") { "\"${escapeKotlinString(it)}\"" }
-            appendLine("val process = ProcessBuilder($args).start()")
-            appendLine()
-            appendLine("val mcpToolRegistry = McpToolRegistryProvider.fromProcess(")
-            append("    process = process")
-            appendLine(")")
+            appendLine("    val process = ProcessBuilder($args).start()")
+            appendLine("    val mcpToolRegistry = McpToolRegistryProvider.fromProcess(process = process)")
         } else {
             servers.forEachIndexed { i, server ->
                 val args = server.serverCommand.split(" ")
                     .filter { it.isNotBlank() }
                     .joinToString(", ") { "\"${escapeKotlinString(it)}\"" }
-                appendLine("val process${i + 1} = ProcessBuilder($args).start()")
+                appendLine("    val process${i + 1} = ProcessBuilder($args).start()")
             }
-            appendLine()
             servers.forEachIndexed { i, _ ->
-                appendLine("val mcpRegistry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
+                appendLine("    val mcpRegistry${i + 1} = McpToolRegistryProvider.fromProcess(process = process${i + 1})")
             }
-            appendLine()
             val combined = (1..servers.size).joinToString(" + ") { "mcpRegistry$it" }
-            append("val mcpToolRegistry = $combined")
+            appendLine("    val mcpToolRegistry = $combined")
         }
     }
+
+    private fun effectiveAgentAsTools(spec: ProjectSpec): List<AgentAsToolSpec> =
+        spec.tooling.agentAsTools.ifEmpty {
+            listOf(
+                AgentAsToolSpec(
+                    agentName = "",
+                    agentDescription = "",
+                    inputDescription = "",
+                    systemPrompt = ""
+                )
+            )
+        }
 
     private fun renderUserToolRegistryFunction(spec: ProjectSpec): String = buildString {
         appendLine("fun createUserToolRegistry(): ToolRegistry = ToolRegistry {")
@@ -219,7 +222,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
             appendLine("    tools(${spec.tooling.annotationToolSetClassName}().asTools())")
         }
         if (spec.tooling.hasAgentAsTools) {
-            spec.tooling.agentAsTools.forEach { agentTool ->
+            effectiveAgentAsTools(spec).forEach { agentTool ->
                 appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
             }
         }
