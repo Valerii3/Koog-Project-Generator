@@ -19,13 +19,14 @@ export function ToolsSection({ tools, selected, disabled, onToggle }: ToolsSecti
   }
 
   return (
-    <div className={styles.grid}>
+    <div className={styles.list}>
       {tools.map(tool => (
         <OptionCard
           key={tool.id}
           label={tool.label}
           description={tool.description}
           selected={selected.includes(tool.id)}
+          layout="list"
           onClick={() => onToggle(tool.id)}
         />
       ))}

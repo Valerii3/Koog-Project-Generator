@@ -19,13 +19,14 @@ export function FeaturesSection({ features, selected, disabled, onToggle }: Feat
   }
 
   return (
-    <div className={styles.grid}>
+    <div className={styles.list}>
       {features.filter(f => f.implemented).map(feature => (
         <OptionCard
           key={feature.id}
           label={feature.label}
           description={feature.description}
           selected={selected.includes(feature.id)}
+          layout="list"
           onClick={() => onToggle(feature.id)}
         />
       ))}

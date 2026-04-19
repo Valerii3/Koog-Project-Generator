@@ -4,6 +4,12 @@
   gap: 14px;
 }
 
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .disabledMessage {
   color: #999;
   font-size: 0.9rem;
