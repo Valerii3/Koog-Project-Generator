@@ -123,6 +123,9 @@ class BasicAgentTemplate : ProjectTemplate {
         provider.executorSetupLines.forEach { setupLine ->
             source.addDeclaration("private $setupLine")
         }
+        if (spec.features.hasLongTermMemory) {
+            source.addDeclaration(renderTopLevelLongTermMemoryStorage())
+        }
 
         if (spec.tooling.hasBuiltInTools) {
             source.addDeclaration(renderBuiltInToolRegistryFunction())
@@ -131,7 +134,7 @@ class BasicAgentTemplate : ProjectTemplate {
             source.addDeclaration(renderSampleToolSetClass(spec.tooling))
         }
         if (spec.tooling.hasAgentAsTools) {
-            spec.tooling.agentAsTools.forEach { agentTool ->
+            effectiveAgentAsTools(spec).forEach { agentTool ->
                 source.addDeclaration(renderAgentAsToolVals(spec, agentTool))
             }
         }
@@ -155,6 +158,11 @@ class BasicAgentTemplate : ProjectTemplate {
         """.trimIndent()
     }
 
+    private fun renderTopLevelLongTermMemoryStorage(): String = """
+        @OptIn(ExperimentalAgentsApi::class)
+        val longTermMemoryStorage = InMemoryRecordStorage()
+    """.trimIndent()
+
     private fun renderMainFunction(spec: ProjectSpec): String = buildString {
         val provider = spec.llmProvider
         appendLine("fun main() = runBlocking {")
@@ -167,10 +175,6 @@ class BasicAgentTemplate : ProjectTemplate {
         val hasFeatureInit = spec.features.hasEventHandler || spec.features.hasChatMemory ||
             spec.features.hasAgentPersistence || spec.features.hasTracing ||
             spec.features.hasLongTermMemory || spec.features.hasAnyOpenTelemetry
-        if (hasFeatureInit) {
-            append(renderFeatureInitBlock(spec))
-            appendLine()
-        }
 
         appendLine("    val agent = AIAgent<String, String>(")
         appendLine("        promptExecutor = ${provider.executorExpression},")
@@ -182,9 +186,12 @@ class BasicAgentTemplate : ProjectTemplate {
             appendLine("        toolRegistry = toolRegistry,")
         }
         if (hasFeatureInit) {
-            appendLine("        init = installFeatures,")
+            appendLine("    ) {")
+            append(renderFeatureInstallBlock(spec))
+            appendLine("    }")
+        } else {
+            appendLine("    )")
         }
-        appendLine("    )")
         appendLine()
 
         if (spec.features.hasChatMemory) {
@@ -247,20 +254,27 @@ class BasicAgentTemplate : ProjectTemplate {
             appendLine("    tools(${spec.tooling.annotationToolSetClassName}().asTools())")
         }
         if (spec.tooling.hasAgentAsTools) {
-            spec.tooling.agentAsTools.forEach { agentTool ->
+            effectiveAgentAsTools(spec).forEach { agentTool ->
                 appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
             }
+            appendLine("    // Add other tools as needed")
         }
         append("}")
     }
 
-    private fun renderFeatureInitBlock(spec: ProjectSpec): String = buildString {
-        if (spec.features.hasLongTermMemory) {
-            appendLine("    @OptIn(ExperimentalAgentsApi::class)")
-            appendLine("    val longTermMemoryStorage = InMemoryRecordStorage()")
-            appendLine()
+    private fun effectiveAgentAsTools(spec: ProjectSpec): List<AgentAsToolSpec> =
+        spec.tooling.agentAsTools.ifEmpty {
+            listOf(
+                AgentAsToolSpec(
+                    agentName = "",
+                    agentDescription = "",
+                    inputDescription = "",
+                    systemPrompt = ""
+                )
+            )
         }
-        appendLine("    val installFeatures: AIAgent<String, String>.() -> Unit = {")
+
+    private fun renderFeatureInstallBlock(spec: ProjectSpec): String = buildString {
         if (spec.features.hasTracing) {
             appendLine("        val logger = KotlinLogging.logger(\"koog.tracing\")")
             appendLine("        install(Tracing) {")
@@ -318,7 +332,6 @@ class BasicAgentTemplate : ProjectTemplate {
             }
             appendLine("        }")
         }
-        append("    }")
     }
 
     private fun renderBuiltInToolRegistryFunction(): String = """

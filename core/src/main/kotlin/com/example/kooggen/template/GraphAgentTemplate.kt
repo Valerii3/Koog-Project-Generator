@@ -167,13 +167,6 @@ class GraphAgentTemplate : ProjectTemplate {
         }
         if (spec.tooling.hasAgentAsTools) {
             out += GeneratedFile("$base/AgentAsToolRegistry.kt", renderAgentAsToolRegistryKt(spec))
-            spec.tooling.agentAsTools.forEach { agentTool ->
-                val fileName = "${toGeneratedAgentTypeName(agentTool.agentName)}Tool.kt"
-                out += GeneratedFile(
-                    "$base/agents/$fileName",
-                    renderSingleAgentAsToolFile(spec, agentTool)
-                )
-            }
         }
         if (spec.tooling.hasMcpTools) {
             out += GeneratedFile("$base/McpTools.kt", renderMcpToolsKt(spec))
@@ -205,7 +198,7 @@ class GraphAgentTemplate : ProjectTemplate {
             appendLine("    registries += createAnnotationToolRegistry()")
         }
         if (spec.tooling.hasAgentAsTools) {
-            appendLine("    registries += createAgentAsToolRegistry(apiKey)")
+            appendLine("    registries += createAgentAsToolRegistry()")
         }
         if (spec.tooling.hasMcpTools) {
             appendLine("    registries += createMcpToolRegistry()")
@@ -279,63 +272,80 @@ class GraphAgentTemplate : ProjectTemplate {
     }
 
     private fun renderAgentAsToolRegistryKt(spec: ProjectSpec): String = buildString {
-        appendLine("package ${spec.packageName}.tools")
-        appendLine()
-        appendLine("import ai.koog.agents.core.tools.ToolRegistry")
-        spec.tooling.agentAsTools.forEach { agentTool ->
-            appendLine("import ${spec.packageName}.tools.agents.create${toGeneratedAgentTypeName(agentTool.agentName)}Tool")
-        }
-        appendLine()
-        appendLine("fun createAgentAsToolRegistry(apiKey: String? = null): ToolRegistry = ToolRegistry {")
-        spec.tooling.agentAsTools.forEach { agentTool ->
-            appendLine("    tool(create${toGeneratedAgentTypeName(agentTool.agentName)}Tool(apiKey))")
-        }
-        appendLine("}")
-    }
-
-    private fun renderSingleAgentAsToolFile(spec: ProjectSpec, tool: AgentAsToolSpec): String = buildString {
         val provider = spec.llmProvider
-        val agentTypeName = toGeneratedAgentTypeName(tool.agentName)
-        val funcName = "create${agentTypeName}Tool"
-        val nestedRegistryFunction = "create${agentTypeName}NestedToolRegistry"
-        val systemPromptConst = "${agentTypeName.uppercase()}_SYSTEM_PROMPT"
-        appendLine("package ${spec.packageName}.tools.agents")
+        val agentTools = effectiveAgentAsTools(spec)
+
+        appendLine("package ${spec.packageName}.tools")
         appendLine()
         appendLine("import ai.koog.agents.core.agent.AIAgentService")
         appendLine("import ai.koog.agents.core.agent.createAgentTool")
         appendLine("import ai.koog.agents.core.tools.ToolRegistry")
+        appendLine("import ai.koog.agents.core.tools.reflect.typeToken")
         provider.importLines.forEach { appendLine(it) }
         appendLine()
-        appendLine("private const val $systemPromptConst = \"${escapeKotlinString(tool.systemPrompt)}\"")
-        appendLine()
-        appendLine("private fun $nestedRegistryFunction(): ToolRegistry = ToolRegistry {")
-        appendLine("    // TODO: Add nested-agent specific tools here (built-in, annotation-based, or agent tools).")
-        appendLine("}")
-        appendLine()
-        appendLine("fun $funcName(rawApiKey: String? = null) = run {")
+
         if (provider.requiresApiKey) {
             val envVar = requireNotNull(provider.envVarName)
-            appendLine("    val apiKey = requireNotNull(rawApiKey) { \"Environment variable $envVar is required.\" }")
-        } else {
-            appendLine("    // Provider ${provider.displayName} does not require an API key.")
+            appendLine("private val apiKey: String = System.getenv(\"$envVar\")")
+            appendLine("    ?: error(\"Environment variable $envVar is not set.\")")
+            appendLine()
         }
         provider.executorSetupLines.forEach { setupLine ->
-            appendLine("    $setupLine")
+            appendLine("private $setupLine")
+        }
+        if (provider.executorSetupLines.isNotEmpty()) {
+            appendLine()
+        }
+
+        agentTools.forEachIndexed { index, agentTool ->
+            append(renderAgentAsToolVals(spec, agentTool))
+            if (index != agentTools.lastIndex) {
+                appendLine()
+                appendLine()
+            }
         }
         appendLine()
-        appendLine("    val service = AIAgentService(")
-        appendLine("        promptExecutor = ${provider.executorExpression},")
-        appendLine("        llmModel = ${provider.modelExpression},")
-        appendLine("        systemPrompt = $systemPromptConst,")
-        appendLine("        toolRegistry = $nestedRegistryFunction()")
-        appendLine("    )")
-        appendLine()
-        appendLine("    service.createAgentTool(")
-        appendLine("        agentName = \"${escapeKotlinString(tool.agentName)}\",")
-        appendLine("        agentDescription = \"${escapeKotlinString(tool.agentDescription)}\",")
-        appendLine("        inputDescription = \"${escapeKotlinString(tool.inputDescription)}\"")
-        appendLine("    )")
+        appendLine("fun createAgentAsToolRegistry(): ToolRegistry = ToolRegistry {")
+        agentTools.forEach { agentTool ->
+            appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
+        }
+        appendLine("    // Add other tools as needed")
         appendLine("}")
+    }
+
+    private fun effectiveAgentAsTools(spec: ProjectSpec): List<AgentAsToolSpec> =
+        spec.tooling.agentAsTools.ifEmpty {
+            listOf(
+                AgentAsToolSpec(
+                    agentName = "",
+                    agentDescription = "",
+                    inputDescription = "",
+                    systemPrompt = ""
+                )
+            )
+        }
+
+    private fun renderAgentAsToolVals(spec: ProjectSpec, tool: AgentAsToolSpec): String = buildString {
+        val provider = spec.llmProvider
+        val serviceVar = toAgentServiceValName(tool.agentName)
+        val toolVar = toAgentToolValName(tool.agentName)
+        val systemPrompt = tool.systemPrompt.ifBlank { "You are a specialized agent." }
+        val agentNameLiteral = tool.agentName.ifBlank { "userAgent" }
+        val agentDescription = tool.agentDescription.ifBlank { "TODO: describe what this agent does" }
+        val inputDescription = tool.inputDescription.ifBlank { "TODO: describe the expected input" }
+
+        appendLine("val $serviceVar = AIAgentService(")
+        appendLine("    promptExecutor = ${provider.executorExpression},")
+        appendLine("    llmModel = ${provider.modelExpression},")
+        appendLine("    systemPrompt = \"${escapeKotlinString(systemPrompt)}\",")
+        appendLine(")")
+        appendLine()
+        appendLine("val $toolVar = $serviceVar.createAgentTool(")
+        appendLine("    agentName = \"${escapeKotlinString(agentNameLiteral)}\",")
+        appendLine("    agentDescription = \"${escapeKotlinString(agentDescription)}\",")
+        appendLine("    inputDescription = \"${escapeKotlinString(inputDescription)}\",")
+        appendLine("    inputType = typeToken<String>(),")
+        append(")")
     }
 
     private fun renderAnnotationToolSetClass(tooling: ProjectToolingSpec): String = buildString {
@@ -449,7 +459,7 @@ class GraphAgentTemplate : ProjectTemplate {
             }
             if (spec.tooling.hasAgentAsTools) {
                 appendLine("- Agent-as-tool registry in `AgentAsToolRegistry.kt`")
-                appendLine("- One file per nested agent tool under `tools/agents/`")
+                appendLine("- Nested agent tool declarations are generated directly in `AgentAsToolRegistry.kt`")
             }
         }
     }
@@ -472,8 +482,20 @@ class GraphAgentTemplate : ProjectTemplate {
         .joinToString("") { part -> part.replaceFirstChar { ch -> ch.uppercase() } }
         .ifBlank { "Agent" }
 
-    private fun toGeneratedAgentTypeName(value: String): String {
+    private fun toCamelCase(value: String): String {
         val pascal = toPascalCase(value)
-        return if (pascal.endsWith("Agent")) pascal else "${pascal}Agent"
+        return pascal.replaceFirstChar { ch -> ch.lowercase() }
+    }
+
+    private fun toAgentServiceValName(agentName: String): String {
+        val camel = toCamelCase(agentName.ifBlank { "user" })
+        val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
+        return "${base}Service"
+    }
+
+    private fun toAgentToolValName(agentName: String): String {
+        val camel = toCamelCase(agentName.ifBlank { "user" })
+        val base = if (camel.endsWith("Agent")) camel else "${camel}Agent"
+        return "${base}Tool"
     }
 }

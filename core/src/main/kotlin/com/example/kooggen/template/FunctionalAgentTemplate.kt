@@ -225,6 +225,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
             effectiveAgentAsTools(spec).forEach { agentTool ->
                 appendLine("    tool(${toAgentToolValName(agentTool.agentName)})")
             }
+            appendLine("    // Add other tools as needed")
         }
         append("}")
     }
