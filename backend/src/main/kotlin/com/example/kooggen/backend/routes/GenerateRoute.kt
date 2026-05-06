@@ -14,6 +14,7 @@ import com.example.kooggen.model.ProjectToolingSpec
 import com.example.kooggen.model.ToolCapability
 import com.example.kooggen.model.LongTermMemoryFeatureConfig
 import com.example.kooggen.model.TracingFeatureConfig
+import com.example.kooggen.template.GeneratedFile
 import com.example.kooggen.template.TemplateRegistry
 import com.example.kooggen.zip.ZipProjectStreamWriter
 import io.ktor.http.*
@@ -70,15 +71,42 @@ fun Route.generateRoute() {
 
         val files = TemplateRegistry().resolve(spec.templateType).render(spec)
 
-        call.response.header(
-            HttpHeaders.ContentDisposition,
-            ContentDisposition.Attachment.withParameter(
-                ContentDisposition.Parameters.FileName, spec.archiveFileName
-            ).toString()
-        )
-
-        call.respondOutputStream(contentType = ContentType.Application.Zip) {
-            ZipProjectStreamWriter.write(this, files)
+        when (req.outputFormat.lowercase()) {
+            "agent_kotlin" -> {
+                val main = files.findMainKotlinOrNull()
+                    ?: return@post call.respond(
+                        HttpStatusCode.InternalServerError,
+                        "No Main.kt in template output"
+                    )
+                call.response.header(
+                    HttpHeaders.ContentDisposition,
+                    ContentDisposition.Attachment.withParameter(
+                        ContentDisposition.Parameters.FileName, "Agent.kt"
+                    ).toString()
+                )
+                call.respondText(
+                    text = main.content,
+                    contentType = ContentType.Text.Plain.withCharset(Charsets.UTF_8)
+                )
+            }
+            "zip" -> {
+                call.response.header(
+                    HttpHeaders.ContentDisposition,
+                    ContentDisposition.Attachment.withParameter(
+                        ContentDisposition.Parameters.FileName, spec.archiveFileName
+                    ).toString()
+                )
+                call.respondOutputStream(contentType = ContentType.Application.Zip) {
+                    ZipProjectStreamWriter.write(this, files)
+                }
+            }
+            else -> call.respond(
+                HttpStatusCode.BadRequest,
+                "Unknown outputFormat: ${req.outputFormat} (use zip or agent_kotlin)"
+            )
         }
     }
 }
+
+private fun List<GeneratedFile>.findMainKotlinOrNull(): GeneratedFile? =
+    firstOrNull { it.path.endsWith("Main.kt") }

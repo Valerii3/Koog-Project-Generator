@@ -37,6 +37,8 @@ export interface GenerateRequest {
   provider: string
   tools: string[]
   features: string[]
+  /** Omit for full ZIP. `agent_kotlin` = single Agent.kt source only. */
+  outputFormat?: 'zip' | 'agent_kotlin'
 }
 
 export interface PreviewFile {

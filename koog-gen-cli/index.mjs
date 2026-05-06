@@ -6,6 +6,11 @@ import { select, input, checkbox, confirm } from '@inquirer/prompts'
 /** Default API origin (Railway production). Override with --url or KOOG_GENERATOR_URL for local/staging. */
 const DEFAULT_GENERATOR_URL = 'https://koog-project-generator-production.up.railway.app'
 
+/** CLI always requests a single Kotlin file (`Main.kt` content saved as `Agent.kt`), never a ZIP. */
+const OUTPUT_FORMAT = 'agent_kotlin'
+
+const DEFAULT_AGENT_FILE = 'Agent.kt'
+
 function parseArgs(argv) {
   let url = process.env.KOOG_GENERATOR_URL ?? DEFAULT_GENERATOR_URL
   for (let i = 0; i < argv.length; i++) {
@@ -28,86 +33,189 @@ function isPlanner(agentType) {
   return agentType === 'PLANNER_SIMPLE' || agentType === 'PLANNER_CRITIC'
 }
 
-function zipNameFromArtifact(artifact) {
-  const parts = artifact.trim().split('.')
-  return `${parts[parts.length - 1] || 'project'}.zip`
+function normalizeAfterAgentChange(state) {
+  if (isPlanner(state.agentType)) {
+    state.tools = []
+    state.features = []
+  } else if (state.agentType !== 'BASIC') {
+    state.features = []
+  }
 }
 
-function filenameFromContentDisposition(header, fallback) {
-  if (!header) return fallback
-  const quoted = /filename="([^"]+)"/i.exec(header)
-  if (quoted) return quoted[1]
-  const plain = /filename=([^;\s]+)/i.exec(header)
-  if (plain) return plain[1].replace(/^"|"$/g, '')
-  const star = /filename\*=UTF-8''([^;\s]+)/i.exec(header)
-  if (star) return decodeURIComponent(star[1])
-  return fallback
-}
-
-async function main() {
-  const { url } = parseArgs(process.argv.slice(2))
-  console.error(`Generator base URL: ${url}\n`)
-
-  const options = await fetchOptions(url)
-
-  const artifact = await input({
+async function promptArtifact(state) {
+  state.artifact = await input({
     message: 'Project artifact (e.g. com.example.hello)',
-    default: 'com.example.hello',
+    default: state.artifact || 'com.example.hello',
   })
+}
 
-  const agentType = await select({
+async function promptAgentType(options, state) {
+  state.agentType = await select({
     message: 'Agent template',
     choices: options.agentTypes.map((a) => ({
       name: `${a.label} — ${a.description}`,
       value: a.id,
     })),
+    default: state.agentType,
   })
+  normalizeAfterAgentChange(state)
+}
 
-  const provider = await select({
+async function promptProvider(options, state) {
+  state.provider = await select({
     message: 'LLM provider',
     choices: options.providers.map((p) => ({
       name: p.envVar ? `${p.label} (${p.envVar})` : p.label,
       value: p.id,
       description: p.description,
     })),
+    default: state.provider,
   })
+}
 
-  let tools = []
-  if (!isPlanner(agentType)) {
-    tools = await checkbox({
-      message: 'Tools (toggle with space, confirm with enter)',
-      choices: options.tools.map((t) => ({
-        name: `${t.label} — ${t.description}`,
-        value: t.id,
-        checked: false,
+async function promptTools(options, state) {
+  if (isPlanner(state.agentType)) {
+    state.tools = []
+    return
+  }
+  state.tools = await checkbox({
+    message:
+      'Tools — pick any combination (↑↓ move, space = toggle on/off, enter = done)',
+    choices: options.tools.map((t) => ({
+      name: `${t.label} — ${t.description}`,
+      value: t.id,
+      checked: state.tools.includes(t.id),
+    })),
+  })
+}
+
+async function promptFeatures(options, state) {
+  if (state.agentType !== 'BASIC') {
+    state.features = []
+    return
+  }
+  state.features = await checkbox({
+    message:
+      'Features (Basic only) — ↑↓ move, space = toggle multiple items, enter = done',
+    choices: options.features
+      .filter((f) => f.implemented)
+      .map((f) => ({
+        name: `${f.label} — ${f.description}`,
+        value: f.id,
+        checked: state.features.includes(f.id),
       })),
-    })
-  }
-
-  let features = []
-  if (agentType === 'BASIC') {
-    features = await checkbox({
-      message: 'Features (Basic agent only)',
-      choices: options.features
-        .filter((f) => f.implemented)
-        .map((f) => ({
-          name: `${f.label} — ${f.description}`,
-          value: f.id,
-          checked: false,
-        })),
-    })
-  }
-
-  const defaultZip = zipNameFromArtifact(artifact)
-  const outRaw = await input({
-    message: 'Output ZIP path',
-    default: resolve(process.cwd(), defaultZip),
   })
-  const outPath = resolve(outRaw)
+}
 
-  if (existsSync(outPath)) {
+async function promptOutputPath(state) {
+  const outRaw = await input({
+    message: 'Save generated Kotlin as (path)',
+    default: state.outPath || resolve(process.cwd(), DEFAULT_AGENT_FILE),
+  })
+  state.outPath = resolve(outRaw)
+}
+
+function summaryLine(state) {
+  const tools = isPlanner(state.agentType)
+    ? '(skipped for planner)'
+    : state.tools.length
+      ? state.tools.join(', ')
+      : 'none'
+  const feats =
+    state.agentType !== 'BASIC'
+      ? '(only for Basic)'
+      : state.features.length
+        ? state.features.join(', ')
+        : 'none'
+  return [
+    `artifact: ${state.artifact}`,
+    `agent: ${state.agentType}`,
+    `provider: ${state.provider}`,
+    `tools: ${tools}`,
+    `features: ${feats}`,
+    `out: ${state.outPath}`,
+  ].join('\n  ')
+}
+
+async function main() {
+  const { url } = parseArgs(process.argv.slice(2))
+
+  const options = await fetchOptions(url)
+
+  const state = {
+    artifact: 'com.example.hello',
+    agentType: options.agentTypes[0]?.id ?? 'BASIC',
+    provider: options.providers[0]?.id ?? 'OPENAI',
+    tools: [],
+    features: [],
+    outPath: resolve(process.cwd(), DEFAULT_AGENT_FILE),
+  }
+
+  await promptArtifact(state)
+  await promptAgentType(options, state)
+  await promptProvider(options, state)
+  await promptTools(options, state)
+  await promptFeatures(options, state)
+  await promptOutputPath(state)
+
+  while (true) {
+    console.error(`\nCurrent configuration:\n  ${summaryLine(state)}\n`)
+    const action = await select({
+      message: 'What next?',
+      choices: [
+        { name: 'Generate Agent.kt', value: 'generate' },
+        { name: 'Edit artifact', value: 'artifact' },
+        { name: 'Edit agent template', value: 'agent' },
+        { name: 'Edit LLM provider', value: 'provider' },
+        {
+          name: isPlanner(state.agentType)
+            ? 'Tools (N/A for planner)'
+            : 'Edit tools',
+          value: 'tools',
+          disabled: isPlanner(state.agentType),
+        },
+        {
+          name:
+            state.agentType !== 'BASIC'
+              ? 'Features (Basic agent only)'
+              : 'Edit features',
+          value: 'features',
+          disabled: state.agentType !== 'BASIC',
+        },
+        { name: 'Edit output path', value: 'output' },
+      ],
+    })
+
+    switch (action) {
+      case 'generate':
+        break
+      case 'artifact':
+        await promptArtifact(state)
+        continue
+      case 'agent':
+        await promptAgentType(options, state)
+        continue
+      case 'provider':
+        await promptProvider(options, state)
+        continue
+      case 'tools':
+        await promptTools(options, state)
+        continue
+      case 'features':
+        await promptFeatures(options, state)
+        continue
+      case 'output':
+        await promptOutputPath(state)
+        continue
+      default:
+        continue
+    }
+    break
+  }
+
+  if (existsSync(state.outPath)) {
     const ok = await confirm({
-      message: `File exists: ${outPath}. Overwrite?`,
+      message: `File exists: ${state.outPath}. Overwrite?`,
       default: false,
     })
     if (!ok) {
@@ -120,11 +228,12 @@ async function main() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      artifact: artifact.trim(),
-      agentType,
-      provider,
-      tools,
-      features,
+      artifact: state.artifact.trim(),
+      agentType: state.agentType,
+      provider: state.provider,
+      tools: state.tools,
+      features: state.features,
+      outputFormat: OUTPUT_FORMAT,
     }),
   })
 
@@ -133,15 +242,9 @@ async function main() {
     process.exit(1)
   }
 
-  const buf = Buffer.from(await res.arrayBuffer())
-  const cd = res.headers.get('content-disposition')
-  const suggested = filenameFromContentDisposition(cd, defaultZip)
-
-  writeFileSync(outPath, buf)
-  console.error(`\nWrote ${outPath} (${buf.length} bytes)`)
-  if (suggested && suggested !== defaultZip) {
-    console.error(`(Server suggested filename: ${suggested})`)
-  }
+  const text = await res.text()
+  writeFileSync(state.outPath, text, 'utf8')
+  console.error(`Wrote ${state.outPath} (${text.length} chars)`)
 }
 
 main().catch((err) => {

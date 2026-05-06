@@ -61,6 +61,10 @@ The CLI calls the same `/api` as the web UI. By default it uses production:
 
 It walks through artifact → agent → provider → tools → features (planner agents skip tools/features; only Basic agents get features).
 
+**Output:** the CLI requests **`agent_kotlin`** — you get a single **`Agent.kt`** file (the former `Main.kt` contents: package, imports, `fun main()`, etc.). No Gradle project / ZIP. The web UI still downloads a **full ZIP** (`outputFormat` defaults to `zip`).
+
+**Multi-select (tools & features):** arrow keys to move, **space** toggles each option on/off, **enter** confirms.
+
 **Run from the repo:**
 
 ```bash
