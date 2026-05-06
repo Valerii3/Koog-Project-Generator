@@ -1,6 +1,6 @@
 {
   "name": "koog-gen-cli",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "private": false,
   "type": "module",
   "description": "Interactive CLI that downloads a single Agent.kt from the koog-starter-generator backend",

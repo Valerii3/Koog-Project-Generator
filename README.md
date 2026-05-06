@@ -65,6 +65,27 @@ It walks through artifact → agent → provider → tools → features (planner
 
 **Multi-select (tools & features):** arrow keys to move, **space** toggles each option on/off, **enter** confirms.
 
+**Catalog and usage (from the server):**
+
+```bash
+node index.mjs --help
+```
+
+**Non-interactive** (writes under the **current working directory** by default, e.g. `./Agent.kt`):
+
+```bash
+node index.mjs \
+  --artifact com.example.demo \
+  --agent BASIC \
+  --provider OPENAI \
+  --tools BUILT_IN,ANNOTATION_BASED \
+  --features CHAT_MEMORY \
+  --output Agent.kt \
+  --force
+```
+
+Omit `--tools` / `--features` for none. Planner agents ignore tools/features. If the output file exists, add **`--force` / `-f`** or the command exits with an error.
+
 **Run from the repo:**
 
 ```bash
