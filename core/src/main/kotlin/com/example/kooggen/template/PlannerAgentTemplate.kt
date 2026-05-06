@@ -24,7 +24,7 @@ class PlannerAgentTemplate : ProjectTemplate {
 
     private fun renderBuildGradle(spec: ProjectSpec): String = """
         plugins {
-            kotlin("jvm") version "2.0.21"
+            kotlin("jvm") version "2.3.0"
             application
         }
 
@@ -36,7 +36,7 @@ class PlannerAgentTemplate : ProjectTemplate {
         }
 
         dependencies {
-            implementation("ai.koog:koog-agents:0.7.1")
+            implementation("ai.koog:koog-agents:0.8.0")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
@@ -56,13 +56,13 @@ class PlannerAgentTemplate : ProjectTemplate {
         val source = KotlinSourceFile(spec.packageName)
 
         source.addImport("import ai.koog.agents.core.agent.config.AIAgentConfig")
-        source.addImport("import ai.koog.agents.ext.agent.PlannerAIAgent")
-        source.addImport("import ai.koog.agents.ext.strategy.AIAgentPlannerStrategy")
+        source.addImport("import ai.koog.agents.planner.PlannerAIAgent")
+        source.addImport("import ai.koog.agents.planner.AIAgentPlannerStrategy")
         when (plannerType) {
             PlannerType.SIMPLE_LLM ->
-                source.addImport("import ai.koog.agents.ext.planner.SimpleLLMPlanner")
+                source.addImport("import ai.koog.agents.planner.llm.SimpleLLMPlanner")
             PlannerType.SIMPLE_LLM_WITH_CRITIC ->
-                source.addImport("import ai.koog.agents.ext.planner.SimpleLLMWithCriticPlanner")
+                source.addImport("import ai.koog.agents.planner.llm.SimpleLLMWithCriticPlanner")
         }
         source.addImport("import ai.koog.prompt.dsl.prompt")
         source.addImports(provider.importLines)

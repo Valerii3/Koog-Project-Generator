@@ -26,7 +26,7 @@ class BasicAgentTemplate : ProjectTemplate {
 
     private fun renderBuildGradle(spec: ProjectSpec): String = """
         plugins {
-            kotlin("jvm") version "2.0.21"
+            kotlin("jvm") version "2.3.0"
             application
         }
 
@@ -38,13 +38,13 @@ class BasicAgentTemplate : ProjectTemplate {
         }
 
         dependencies {
-            implementation("ai.koog:koog-agents:0.7.1")
-            ${if (spec.features.hasChatMemory || spec.features.hasLongTermMemory) "implementation(\"ai.koog:agents-features-memory:0.7.1\")" else ""}
-            ${if (spec.features.hasAgentPersistence) "implementation(\"ai.koog.agents:agents-features-snapshot:0.7.1\")" else ""}
-            ${if (spec.features.hasTracing) "implementation(\"ai.koog:agents-features-trace:0.7.1\")" else ""}
+            implementation("ai.koog:koog-agents:0.8.0")
+            ${if (spec.features.hasChatMemory || spec.features.hasLongTermMemory) "implementation(\"ai.koog:agents-features-memory:0.8.0\")" else ""}
+            ${if (spec.features.hasAgentPersistence) "implementation(\"ai.koog.agents:agents-features-snapshot:0.8.0\")" else ""}
+            ${if (spec.features.hasTracing) "implementation(\"ai.koog:agents-features-trace:0.8.0\")" else ""}
             ${if (spec.features.hasTracing) "implementation(\"io.github.oshai:kotlin-logging-jvm:7.0.0\")" else ""}
             ${if (spec.features.hasTracing) "runtimeOnly(\"org.slf4j:slf4j-simple:2.0.16\")" else ""}
-            ${if (spec.tooling.hasMcpTools) "implementation(\"ai.koog:agents-mcp:0.7.1\")" else ""}
+            ${if (spec.tooling.hasMcpTools) "implementation(\"ai.koog:agents-mcp:0.8.0\")" else ""}
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
@@ -67,7 +67,7 @@ class BasicAgentTemplate : ProjectTemplate {
             source.addImport("import ai.koog.agents.features.eventHandler.feature.handleEvents")
         }
         if (spec.features.hasChatMemory) {
-            source.addImport("import ai.koog.agents.features.memory.feature.ChatMemory")
+            source.addImport("import ai.koog.agents.chatMemory.feature.ChatMemory")
         }
         if (spec.features.hasAgentPersistence) {
             source.addImport("import ai.koog.agents.snapshot.feature.Persistence")
@@ -80,9 +80,9 @@ class BasicAgentTemplate : ProjectTemplate {
         }
         if (spec.features.hasLongTermMemory) {
             source.addImport("import ai.koog.agents.core.annotation.ExperimentalAgentsApi")
-            source.addImport("import ai.koog.agents.features.memory.feature.LongTermMemory")
-            source.addImport("import ai.koog.agents.features.memory.storage.InMemoryRecordStorage")
-            source.addImport("import ai.koog.agents.features.memory.search.SimilaritySearchStrategy")
+            source.addImport("import ai.koog.agents.longtermmemory.feature.LongTermMemory")
+            source.addImport("import ai.koog.agents.longtermmemory.storage.InMemoryRecordStorage")
+            source.addImport("import ai.koog.agents.longtermmemory.retrieval.SimilaritySearchStrategy")
         }
         if (spec.features.hasAnyOpenTelemetry) {
             source.addImport("import ai.koog.agents.features.opentelemetry.feature.OpenTelemetry")
@@ -99,7 +99,7 @@ class BasicAgentTemplate : ProjectTemplate {
                 source.addImport("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
                 source.addImport("import ai.koog.agents.ext.tool.file.ReadFileTool")
                 source.addImport("import ai.koog.agents.ext.tool.file.WriteFileTool")
-                source.addImport("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
+                source.addImport("import ai.koog.rag.base.files.JVMFileSystemProvider")
             }
             if (spec.tooling.hasAnnotationTools) {
                 source.addImport("import ai.koog.agents.core.tools.annotations.LLMDescription")
@@ -110,10 +110,11 @@ class BasicAgentTemplate : ProjectTemplate {
             if (spec.tooling.hasAgentAsTools) {
                 source.addImport("import ai.koog.agents.core.agent.AIAgentService")
                 source.addImport("import ai.koog.agents.core.agent.createAgentTool")
-                source.addImport("import ai.koog.agents.core.tools.reflect.typeToken")
+                source.addImport("import ai.koog.serialization.typeToken")
             }
             if (spec.tooling.hasMcpTools) {
                 source.addImport("import ai.koog.agents.mcp.McpToolRegistryProvider")
+                source.addImport("import ai.koog.agents.mcp.fromProcess")
             }
         }
 

@@ -29,7 +29,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
 
     private fun renderBuildGradle(spec: ProjectSpec): String = """
         plugins {
-            kotlin("jvm") version "2.0.21"
+            kotlin("jvm") version "2.3.0"
             application
         }
 
@@ -41,8 +41,8 @@ class FunctionalAgentTemplate : ProjectTemplate {
         }
 
         dependencies {
-            implementation("ai.koog:koog-agents:0.7.1")
-            ${if (spec.tooling.hasMcpTools) "implementation(\"ai.koog:agents-mcp:0.7.1\")" else ""}
+            implementation("ai.koog:koog-agents:0.8.0")
+            ${if (spec.tooling.hasMcpTools) "implementation(\"ai.koog:agents-mcp:0.8.0\")" else ""}
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
         }
@@ -61,7 +61,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
         val source = KotlinSourceFile(spec.packageName)
 
         source.addImport("import ai.koog.agents.core.agent.AIAgent")
-        source.addImport("import ai.koog.agents.core.dsl.builder.functionalStrategy")
+        source.addImport("import ai.koog.agents.core.agent.functionalStrategy")
         source.addImports(provider.importLines)
         source.addImport("import kotlinx.coroutines.runBlocking")
 
@@ -74,7 +74,7 @@ class FunctionalAgentTemplate : ProjectTemplate {
                 source.addImport("import ai.koog.agents.ext.tool.file.ListDirectoryTool")
                 source.addImport("import ai.koog.agents.ext.tool.file.ReadFileTool")
                 source.addImport("import ai.koog.agents.ext.tool.file.WriteFileTool")
-                source.addImport("import ai.koog.agents.ext.tool.file.jvm.JVMFileSystemProvider")
+                source.addImport("import ai.koog.rag.base.files.JVMFileSystemProvider")
             }
             if (spec.tooling.hasAnnotationTools) {
                 source.addImport("import ai.koog.agents.core.tools.annotations.LLMDescription")
@@ -85,10 +85,11 @@ class FunctionalAgentTemplate : ProjectTemplate {
             if (spec.tooling.hasAgentAsTools) {
                 source.addImport("import ai.koog.agents.core.agent.AIAgentService")
                 source.addImport("import ai.koog.agents.core.agent.createAgentTool")
-                source.addImport("import ai.koog.agents.core.tools.reflect.typeToken")
+                source.addImport("import ai.koog.serialization.typeToken")
             }
             if (spec.tooling.hasMcpTools) {
                 source.addImport("import ai.koog.agents.mcp.McpToolRegistryProvider")
+                source.addImport("import ai.koog.agents.mcp.fromProcess")
             }
         }
 
